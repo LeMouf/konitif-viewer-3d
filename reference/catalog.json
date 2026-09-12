@@ -1,0 +1,111 @@
+{
+  "schemaVersion": "1.0.0",
+  "package": "@konitif/viewer-3d",
+  "intent": "Projeter un sujet dans une scène 3D sans donner à la vue l'autorité du sujet.",
+  "clusters": [
+    {
+      "id": "spatial-contracts",
+      "title": "Contrats spatiaux",
+      "summary": "Valeurs géométriques de la projection 3D.",
+      "authority": "Contrats de représentation spatiale.",
+      "owns": [
+        "vecteurs",
+        "rotations",
+        "transformations"
+      ],
+      "doesNotOwn": [
+        "identité du sujet"
+      ],
+      "workflow": [
+        "Décrire",
+        "Transformer",
+        "Projeter"
+      ],
+      "symbolNames": [
+        "Viewer3DVector",
+        "Viewer3DQuaternion",
+        "Viewer3DTransform"
+      ]
+    },
+    {
+      "id": "scene-projection",
+      "title": "Projection de scène",
+      "summary": "Snapshots et ports qui rendent une scène observable.",
+      "authority": "État dérivé de scène.",
+      "owns": [
+        "snapshot",
+        "port"
+      ],
+      "doesNotOwn": [
+        "état domaine"
+      ],
+      "workflow": [
+        "Adapter",
+        "Projeter",
+        "Observer"
+      ],
+      "symbolNames": [
+        "Viewer3DSceneSnapshot",
+        "Viewer3DPort",
+        "createViewer3DSceneSnapshot"
+      ]
+    },
+    {
+      "id": "renderer-projection",
+      "title": "Projection renderer",
+      "summary": "Runtime Three.js fourni par une entrée explicite et alimenté par des ports empruntés.",
+      "authority": "État et cycle de vie de la projection visuelle.",
+      "owns": [
+        "scène Three.js",
+        "caméra de projection",
+        "cadence d'affichage",
+        "cycle de vie du renderer"
+      ],
+      "doesNotOwn": [
+        "identité du robot",
+        "politique physique",
+        "campagne expérimentale",
+        "shell Workbench"
+      ],
+      "workflow": [
+        "Recevoir",
+        "Projeter",
+        "Observer",
+        "Détruire"
+      ],
+      "symbolNames": [
+        "Viewer3D",
+        "Viewer3DOptions",
+        "normalizeConfiguredDisplayFrameRate"
+      ]
+    },
+    {
+      "id": "workflow-integration",
+      "title": "Workflow et outil",
+      "summary": "Spécialisation 3D d'une source de composition et contribution au Workbench.",
+      "authority": "Contrat Viewer amodal spécialisé par l'incarnation 3D.",
+      "owns": [
+        "source workflow",
+        "intention",
+        "module"
+      ],
+      "doesNotOwn": [
+        "runtime hôte",
+        "contrat Viewer amodal"
+      ],
+      "workflow": [
+        "Déclarer",
+        "Brancher",
+        "Utiliser"
+      ],
+      "symbolNames": [
+        "Viewer3DIntent",
+        "ViewerWorkflowCompositionSource",
+        "createViewerWorkflowCompositionSource",
+        "Viewer3DWorkflowCompositionSource",
+        "createViewer3DWorkflowCompositionSource",
+        "viewer3DToolModule"
+      ]
+    }
+  ]
+}

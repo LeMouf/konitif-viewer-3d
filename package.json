@@ -1,0 +1,52 @@
+{
+  "name": "@konitif/viewer-3d",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "version": "0.284.1",
+  "private": false,
+  "type": "module",
+  "description": "Product-neutral Three.js projection contracts and explicit-provider renderer for KONITIF viewers.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LeMouf/konitif-viewer-3d.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./renderer": {
+      "types": "./dist/renderer/index.d.ts",
+      "import": "./dist/renderer/index.js"
+    }
+  },
+  "files": [
+    "LICENSE.md",
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test tests/*.test.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
+    "prepack": "npm run build && npm test",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@konitif/physics": "0.284.1",
+    "@konitif/temporal": "0.284.1",
+    "@konitif/tools": "0.284.3",
+    "@konitif/viewer": "0.284.1",
+    "@types/three": "0.183.1",
+    "three": "^0.183.2"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

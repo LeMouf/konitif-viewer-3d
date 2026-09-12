@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "1.0.0",
+  "package": "@konitif/viewer-3d",
+  "diagrams": [
+    {
+      "id": "subject-to-scene",
+      "title": "Du sujet à la scène 3D",
+      "kind": "boundary",
+      "summary": "Le viewer adapte un sujet et ses transformations vers une scène observable sans acquérir son identité.",
+      "nodes": [
+        {
+          "id": "subject",
+          "label": "Sujet canonique",
+          "description": "L'objet observé reste détenu par son domaine."
+        },
+        {
+          "id": "source",
+          "label": "Source de composition",
+          "description": "Une lecture compatible est préparée."
+        },
+        {
+          "id": "snapshot",
+          "label": "Snapshot de scène",
+          "description": "Transformations et objets visibles sont dérivés."
+        },
+        {
+          "id": "port",
+          "label": "Port 3D",
+          "description": "Le moteur de rendu reçoit un contrat stable.",
+          "tone": "runtime"
+        },
+        {
+          "id": "renderer",
+          "label": "Renderer explicite",
+          "description": "Three.js projette la scène sans acquérir l'autorité du sujet.",
+          "tone": "runtime"
+        },
+        {
+          "id": "scene",
+          "label": "Scène perceptible",
+          "description": "L'utilisateur observe la projection.",
+          "tone": "projection"
+        }
+      ],
+      "edges": [
+        {
+          "from": "subject",
+          "to": "source"
+        },
+        {
+          "from": "source",
+          "to": "snapshot"
+        },
+        {
+          "from": "snapshot",
+          "to": "port"
+        },
+        {
+          "from": "port",
+          "to": "renderer"
+        },
+        {
+          "from": "renderer",
+          "to": "scene"
+        }
+      ],
+      "caption": "Caméra, cadrage et transformation de vue restent des états de projection."
+    }
+  ]
+}
