@@ -19,7 +19,7 @@ test('the package and lock bind the qualified 3D projection closure', () => {
   const lock = json('package-lock.json');
 
   assert.equal(manifest.name, '@konitif/viewer-3d');
-  assert.equal(manifest.version, '0.284.1');
+  assert.equal(manifest.version, '0.284.2');
   assert.equal(manifest.private, false);
   assert.equal(manifest.repository.url, 'git+https://github.com/LeMouf/konitif-viewer-3d.git');
   assert.deepEqual(manifest.publishConfig, {

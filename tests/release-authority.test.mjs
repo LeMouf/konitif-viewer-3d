@@ -11,7 +11,7 @@ test('release inputs bind the exact package version to its repository and tag re
   const lock = json('package-lock.json');
   const base = {
     GITHUB_REPOSITORY: 'LeMouf/konitif-viewer-3d',
-    GITHUB_REF: 'refs/tags/v0.284.1'
+    GITHUB_REF: 'refs/tags/v0.284.2'
   };
   assert.doesNotThrow(() => assertReleaseInputs(policy, manifest, lock, {
     ...base,
@@ -20,18 +20,18 @@ test('release inputs bind the exact package version to its repository and tag re
   assert.doesNotThrow(() => assertReleaseInputs(policy, manifest, lock, {
     ...base,
     GITHUB_EVENT_NAME: 'workflow_dispatch',
-    VIEWER_3D_RELEASE_TAG: 'v0.284.1'
-  }));
-  assert.throws(() => assertReleaseInputs(policy, manifest, lock, {
-    ...base,
-    GITHUB_EVENT_NAME: 'workflow_dispatch',
     VIEWER_3D_RELEASE_TAG: 'v0.284.2'
   }));
   assert.throws(() => assertReleaseInputs(policy, manifest, lock, {
     ...base,
     GITHUB_EVENT_NAME: 'workflow_dispatch',
+    VIEWER_3D_RELEASE_TAG: 'v0.284.3'
+  }));
+  assert.throws(() => assertReleaseInputs(policy, manifest, lock, {
+    ...base,
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_REF: 'refs/heads/main',
-    VIEWER_3D_RELEASE_TAG: 'v0.284.1'
+    VIEWER_3D_RELEASE_TAG: 'v0.284.2'
   }));
 });
 

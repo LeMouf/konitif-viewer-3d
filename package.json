@@ -1,7 +1,7 @@
 {
   "name": "@konitif/viewer-3d",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "version": "0.284.1",
+  "version": "0.284.2",
   "private": false,
   "type": "module",
   "description": "Product-neutral Three.js projection contracts and explicit-provider renderer for KONITIF viewers.",
