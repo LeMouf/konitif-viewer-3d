@@ -4,41 +4,41 @@
   "diagrams": [
     {
       "id": "subject-to-scene",
-      "title": "Du sujet à la scène 3D",
+      "title": "From subject to 3D scene",
       "kind": "boundary",
-      "summary": "Le viewer adapte un sujet et ses transformations vers une scène observable sans acquérir son identité.",
+      "summary": "Viewer adapts a subject and its transforms into an observable scene without acquiring its identity.",
       "nodes": [
         {
           "id": "subject",
-          "label": "Sujet canonique",
-          "description": "L'objet observé reste détenu par son domaine."
+          "label": "Canonical subject",
+          "description": "The observed object remains owned by its domain."
         },
         {
           "id": "source",
-          "label": "Source de composition",
-          "description": "Une lecture compatible est préparée."
+          "label": "Composition source",
+          "description": "A compatible reading is prepared."
         },
         {
           "id": "snapshot",
-          "label": "Snapshot de scène",
-          "description": "Transformations et objets visibles sont dérivés."
+          "label": "Scene snapshot",
+          "description": "Transforms and visible objects are derived."
         },
         {
           "id": "port",
-          "label": "Port 3D",
-          "description": "Le moteur de rendu reçoit un contrat stable.",
+          "label": "3D port",
+          "description": "The renderer receives a stable contract.",
           "tone": "runtime"
         },
         {
           "id": "renderer",
-          "label": "Renderer explicite",
-          "description": "Three.js projette la scène sans acquérir l'autorité du sujet.",
+          "label": "Explicit renderer",
+          "description": "Three.js projects the scene without acquiring authority over the subject.",
           "tone": "runtime"
         },
         {
           "id": "scene",
-          "label": "Scène perceptible",
-          "description": "L'utilisateur observe la projection.",
+          "label": "Perceptible scene",
+          "description": "The user observes the projection.",
           "tone": "projection"
         }
       ],
@@ -64,7 +64,7 @@
           "to": "scene"
         }
       ],
-      "caption": "Caméra, cadrage et transformation de vue restent des états de projection."
+      "caption": "Camera, framing, and view transforms remain projection state."
     }
   ]
 }

@@ -29,7 +29,8 @@
     "LICENSE.md",
     "dist",
     "README.md",
-    "package.json"
+    "package.json",
+    "reference"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
