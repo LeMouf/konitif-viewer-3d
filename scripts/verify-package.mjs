@@ -68,7 +68,7 @@ const viewer3DDirectory = join(evidence, 'viewer-3d');
 const packedViewer3D = pack(root, viewer3DDirectory);
 const files = packedViewer3D.files.map(file => file.path).sort();
 for (const file of files) {
-  assert.match(file, /^(dist\/|package\.json$|README\.md$|LICENSE\.md$)/);
+  assert.match(file, /^(dist\/|reference\/|package\.json$|README\.md$|LICENSE\.md$)/);
 }
 for (const file of [
   'dist/index.js',
@@ -77,11 +77,14 @@ for (const file of [
   'dist/renderer/index.d.ts',
   'dist/renderer/Viewer3DRenderer.js',
   'dist/renderer/Viewer3DRenderer.d.ts',
+  'reference/README.md',
+  'reference/catalog.json',
+  'reference/diagrams.json',
   'README.md',
   'LICENSE.md',
   'package.json'
 ]) assert.ok(files.includes(file), file);
-assert.equal(files.length, 175);
+assert.equal(files.length, 178);
 const viewer3D = extract(packedViewer3D, viewer3DDirectory, manifest.name);
 
 const runtimeClosure = [

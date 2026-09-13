@@ -1,25 +1,25 @@
 {
   "schemaVersion": "1.0.0",
   "package": "@konitif/viewer-3d",
-  "intent": "Projeter un sujet dans une scène 3D sans donner à la vue l'autorité du sujet.",
+  "intent": "Project a subject into a 3D scene without granting the view authority over the subject.",
   "clusters": [
     {
       "id": "spatial-contracts",
-      "title": "Contrats spatiaux",
-      "summary": "Valeurs géométriques de la projection 3D.",
-      "authority": "Contrats de représentation spatiale.",
+      "title": "Spatial contracts",
+      "summary": "Geometric values for the 3D projection.",
+      "authority": "Spatial representation contracts.",
       "owns": [
-        "vecteurs",
+        "vectors",
         "rotations",
-        "transformations"
+        "transforms"
       ],
       "doesNotOwn": [
-        "identité du sujet"
+        "subject identity"
       ],
       "workflow": [
-        "Décrire",
-        "Transformer",
-        "Projeter"
+        "Describe",
+        "Transform",
+        "Project"
       ],
       "symbolNames": [
         "Viewer3DVector",
@@ -29,20 +29,20 @@
     },
     {
       "id": "scene-projection",
-      "title": "Projection de scène",
-      "summary": "Snapshots et ports qui rendent une scène observable.",
-      "authority": "État dérivé de scène.",
+      "title": "Scene projection",
+      "summary": "Snapshots and ports that make a scene observable.",
+      "authority": "Derived scene state.",
       "owns": [
         "snapshot",
         "port"
       ],
       "doesNotOwn": [
-        "état domaine"
+        "domain state"
       ],
       "workflow": [
-        "Adapter",
-        "Projeter",
-        "Observer"
+        "Adapt",
+        "Project",
+        "Observe"
       ],
       "symbolNames": [
         "Viewer3DSceneSnapshot",
@@ -52,26 +52,26 @@
     },
     {
       "id": "renderer-projection",
-      "title": "Projection renderer",
-      "summary": "Runtime Three.js fourni par une entrée explicite et alimenté par des ports empruntés.",
-      "authority": "État et cycle de vie de la projection visuelle.",
+      "title": "Renderer projection",
+      "summary": "Three.js runtime supplied through an explicit entry point and fed by borrowed ports.",
+      "authority": "State and lifecycle of the visual projection.",
       "owns": [
-        "scène Three.js",
-        "caméra de projection",
-        "cadence d'affichage",
-        "cycle de vie du renderer"
+        "Three.js scene",
+        "projection camera",
+        "display cadence",
+        "renderer lifecycle"
       ],
       "doesNotOwn": [
-        "identité du robot",
-        "politique physique",
-        "campagne expérimentale",
-        "shell Workbench"
+        "robot identity",
+        "physics policy",
+        "experimental campaign",
+        "Workbench shell"
       ],
       "workflow": [
-        "Recevoir",
-        "Projeter",
-        "Observer",
-        "Détruire"
+        "Receive",
+        "Project",
+        "Observe",
+        "Dispose"
       ],
       "symbolNames": [
         "Viewer3D",
@@ -81,22 +81,22 @@
     },
     {
       "id": "workflow-integration",
-      "title": "Workflow et outil",
-      "summary": "Spécialisation 3D d'une source de composition et contribution au Workbench.",
-      "authority": "Contrat Viewer amodal spécialisé par l'incarnation 3D.",
+      "title": "Workflow and tool",
+      "summary": "3D specialization of a composition source and a Workbench contribution.",
+      "authority": "Amodal Viewer contract specialized by the 3D incarnation.",
       "owns": [
-        "source workflow",
-        "intention",
+        "workflow source",
+        "intent",
         "module"
       ],
       "doesNotOwn": [
-        "runtime hôte",
-        "contrat Viewer amodal"
+        "host runtime",
+        "amodal Viewer contract"
       ],
       "workflow": [
-        "Déclarer",
-        "Brancher",
-        "Utiliser"
+        "Declare",
+        "Connect",
+        "Use"
       ],
       "symbolNames": [
         "Viewer3DIntent",
