@@ -19,7 +19,7 @@ test('the package and lock bind the qualified 3D projection closure', () => {
   const lock = json('package-lock.json');
 
   assert.equal(manifest.name, '@konitif/viewer-3d');
-  assert.equal(manifest.version, '0.284.2');
+  assert.equal(manifest.version, '0.285.0');
   assert.equal(manifest.private, false);
   assert.equal(manifest.repository.url, 'git+https://github.com/LeMouf/konitif-viewer-3d.git');
   assert.deepEqual(manifest.publishConfig, {
@@ -27,7 +27,7 @@ test('the package and lock bind the qualified 3D projection closure', () => {
     registry: 'https://registry.npmjs.org/'
   });
   assert.deepEqual(manifest.dependencies, {
-    '@konitif/physics': '0.284.1',
+    '@konitif/physics': '0.285.0',
     '@konitif/temporal': '0.284.1',
     '@konitif/tools': '0.284.3',
     '@konitif/viewer': '0.284.1',
@@ -69,6 +69,7 @@ test('Viewer remains amodal while this package owns only the 3D projection', () 
     const source = readFileSync(file, 'utf8');
     const name = relative(root, file);
     assert.doesNotMatch(source, /@konitif\/(?:workbench|workbench-ui|ui|product|nodal)(?:\/|['"])/, name);
+    assert.doesNotMatch(source, /\bRobotPhysicsSource\b|\bloadPhysicsRobot\b/, name);
     for (const match of source.matchAll(/(?:from|import\s*\()\s*['"]([^'"]+)['"]/g)) {
       assert.match(
         match[1],

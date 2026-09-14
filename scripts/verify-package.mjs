@@ -24,7 +24,7 @@ const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
 assert.equal(manifest.name, '@konitif/viewer-3d');
 assert.equal(manifest.private, false);
 assert.deepEqual(manifest.dependencies, {
-  '@konitif/physics': '0.284.1',
+  '@konitif/physics': '0.285.0',
   '@konitif/temporal': '0.284.1',
   '@konitif/tools': '0.284.3',
   '@konitif/viewer': '0.284.1',

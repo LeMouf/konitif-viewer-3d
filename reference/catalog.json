@@ -62,10 +62,10 @@
         "renderer lifecycle"
       ],
       "doesNotOwn": [
-        "robot identity",
-        "physics policy",
-        "experimental campaign",
-        "Workbench shell"
+        "subject identity",
+        "simulation policy",
+        "observation protocol",
+        "host shell"
       ],
       "workflow": [
         "Receive",
@@ -80,12 +80,12 @@
       ]
     },
     {
-      "id": "workflow-integration",
-      "title": "Workflow and tool",
-      "summary": "3D specialization of a composition source and a Workbench contribution.",
+      "id": "composition-integration",
+      "title": "Composition and host contribution",
+      "summary": "3D specialization of a composition source and a portable host contribution.",
       "authority": "Amodal Viewer contract specialized by the 3D incarnation.",
       "owns": [
-        "workflow source",
+        "composition source",
         "intent",
         "module"
       ],

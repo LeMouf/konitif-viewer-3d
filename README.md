@@ -1,7 +1,7 @@
 # @konitif/viewer-3d
 
 Three.js-based spatial projection contracts and an explicit-provider renderer
-for KONITIF Viewers.
+for KONITIF Viewer implementations.
 
 ## Installation
 
@@ -13,16 +13,17 @@ npm install @konitif/viewer-3d
 
 - Three-dimensional vectors, transforms, scene snapshots and intents.
 - A Workbench tool declaration for a spatial projection.
-- Data-only definitions for joints, supports, contacts, balance, hands and LED
-  placement.
-- An optional renderer entry with explicit physics and experiment providers.
+- Data-only definitions for articulated transforms, supports, contacts, mass
+  properties, landmarks and emitter placement.
+- An optional renderer entry with explicit simulation and observation
+  providers.
 
 ## Authority boundary
 
 The amodal Viewer contract belongs to `@konitif/viewer`. This package owns only
-the state and lifecycle of its 3D projection. Robot identity, model loading,
-authored calibration, physics policy, product campaigns and Workbench shell
-state remain host responsibilities.
+the state and lifecycle of its 3D projection. Subject identity, asset loading,
+authored calibration, simulation policy, observation protocols and shell state
+remain responsibilities of explicit providers.
 
 ## Quick start
 

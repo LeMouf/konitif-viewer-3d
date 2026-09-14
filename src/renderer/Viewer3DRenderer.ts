@@ -26,7 +26,7 @@ import { createViewerTemporalScheduler } from './ViewerTemporalScheduler.js';
 import type {
   BodyTransform, JointTarget, PhysicsBodyImpulse, PhysicsEngineType, PhysicsColliderProxy,
   PhysicsRootPose, PhysicsRuntimeConfig, PhysicsServiceSnapshot,
-  PhysicsServicePort, RobotPhysicsSource
+  PhysicsServicePort, PhysicsSubjectSource
 } from '@konitif/physics';
 import { copyViewerMetadata, type ViewerMetadata } from './ViewerMetadata.js';
 import type { ViewerHistoryPort, ViewerHistoryObservation } from './ViewerHistoryPort.js';
@@ -2050,7 +2050,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     }
   }
 
-  async loadPhysicsRobot(source: RobotPhysicsSource): Promise<void> {
+  async loadPhysicsSubject(source: PhysicsSubjectSource): Promise<void> {
     if (this.destroyed) return;
     const visualAlignment = resolvePhysicsVisualAlignmentProfile(source.metadata?.visualAlignment);
     const visualBodyObjectNames = resolvePhysicsSourceStringListMap(
@@ -2074,7 +2074,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.physicsResetBaselineCaptureFrames = 0;
     this.physicsAuthoredJointTargets.clear();
     this.resetPhysicsPostureCompensation();
-    await this.physicsService.loadRobot(source);
+    await this.physicsService.loadSubject(source);
     if (this.destroyed) return;
     this.resetTemporalProjection();
     const synchronizedKinematicPose = this.syncPhysicsKinematicPoseFromRobotPose({ holdFrames: 3 });
@@ -7180,7 +7180,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
   private resolveRobotSupportGeometryBounds(robot: Object3D, candidates: readonly string[]): Box3 | null {
     // FSR frames are useful semantic anchors but are intentionally empty in
-    // the NAO model. Resolve the first candidate that owns rendered geometry
+    // an articulated model. Resolve the first candidate that owns rendered geometry
     // instead of accepting an empty frame and falling back to whole-body
     // bounds, which left the soles visibly above the support floor.
     for (const candidate of candidates) {

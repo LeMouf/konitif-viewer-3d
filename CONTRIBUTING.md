@@ -13,5 +13,5 @@ npm test
 npm run verify:package
 ```
 
-Keep robot identity, product calibration and Workbench shell state outside the
+Keep subject identity, authored calibration and host shell state outside the
 renderer. Follow `RELEASE.md` for publication.
