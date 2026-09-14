@@ -1,10 +1,10 @@
 {
   "name": "@konitif/viewer-3d",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "version": "0.284.2",
+  "version": "0.285.0",
   "private": false,
   "type": "module",
-  "description": "Product-neutral Three.js projection contracts and explicit-provider renderer for KONITIF viewers.",
+  "description": "Three.js spatial projection contracts and an explicit-provider renderer for KONITIF viewers.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/LeMouf/konitif-viewer-3d.git"
@@ -40,7 +40,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "@konitif/physics": "0.284.1",
+    "@konitif/physics": "0.285.0",
     "@konitif/temporal": "0.284.1",
     "@konitif/tools": "0.284.3",
     "@konitif/viewer": "0.284.1",

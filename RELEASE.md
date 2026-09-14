@@ -43,4 +43,11 @@ to publish a branch. Dispatch from the exact tag ref and provide the same tag as
 input. Dispatching from `main` is intentionally refused.
 
 The repository publishes neither the generic Viewer authority nor Workbench,
-product adapters, robot profiles or physics backends.
+domain adapters, subject profiles or simulation backends.
+
+## Physics subject migration
+
+The renderer version paired with the generic Physics subject-source contract
+replaces `loadPhysicsRobot` with `loadPhysicsSubject`. It must depend on the
+Physics release that provides `PhysicsSubjectSource` and `loadSubject`; publish
+Physics first, then this 3D projection package.
