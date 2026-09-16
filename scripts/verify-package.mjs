@@ -36,6 +36,19 @@ assert.deepEqual(manifest.exports, {
   './renderer': {
     types: './dist/renderer/index.d.ts',
     import: './dist/renderer/index.js'
+  },
+  './visual-ground': { types: './dist/visualGroundConfig.d.ts', import: './dist/visualGroundConfig.js' },
+  './orientation': {
+    types: './dist/orientationGizmoProjection.d.ts',
+    import: './dist/orientationGizmoProjection.js'
+  },
+  './projectile': {
+    types: './dist/renderer/ProjectileInteraction.d.ts',
+    import: './dist/renderer/ProjectileInteraction.js'
+  },
+  './led-calibration': {
+    types: './dist/ledRingCalibration.d.ts',
+    import: './dist/ledRingCalibration.js'
   }
 });
 
@@ -43,7 +56,7 @@ const run = (command, args, cwd = root) => execFileSync(command, args, {
   cwd,
   encoding: 'utf8',
   maxBuffer: 16 * 1024 * 1024,
-  env: { ...process.env, npm_config_offline: 'true', npm_config_cache: cache }
+  env: { ...process.env, npm_config_offline: 'true', npm_config_update_notifier: 'false', npm_config_cache: cache }
 });
 
 function pack(source, destination) {
@@ -73,6 +86,14 @@ for (const file of files) {
 for (const file of [
   'dist/index.js',
   'dist/index.d.ts',
+  'dist/visualGroundConfig.js',
+  'dist/visualGroundConfig.d.ts',
+  'dist/orientationGizmoProjection.js',
+  'dist/orientationGizmoProjection.d.ts',
+  'dist/renderer/ProjectileInteraction.js',
+  'dist/renderer/ProjectileInteraction.d.ts',
+  'dist/ledRingCalibration.js',
+  'dist/ledRingCalibration.d.ts',
   'dist/renderer/index.js',
   'dist/renderer/index.d.ts',
   'dist/renderer/Viewer3DRenderer.js',
@@ -84,7 +105,7 @@ for (const file of [
   'LICENSE.md',
   'package.json'
 ]) assert.ok(files.includes(file), file);
-assert.equal(files.length, 178);
+assert.equal(files.length, 186);
 const viewer3D = extract(packedViewer3D, viewer3DDirectory, manifest.name);
 
 const runtimeClosure = [
@@ -119,6 +140,7 @@ for (const packageName of runtimeClosure) {
 
 copyFileSync(join(root, 'tests/consumer.mts'), join(evidence, 'consumer/consumer.mts'));
 copyFileSync(join(root, 'tests/consumer.mjs'), join(evidence, 'consumer/consumer.mjs'));
+copyFileSync(join(root, 'tests/consumer-narrow.mjs'), join(evidence, 'consumer/consumer-narrow.mjs'));
 run(process.execPath, [
   join(root, 'node_modules/typescript/bin/tsc'),
   '--noEmit',
@@ -130,6 +152,7 @@ run(process.execPath, [
   '--lib', 'ES2022,DOM,DOM.Iterable',
   'consumer.mts'
 ], join(evidence, 'consumer'));
+run(process.execPath, ['consumer-narrow.mjs'], join(evidence, 'consumer'));
 run(process.execPath, ['consumer.mjs'], join(evidence, 'consumer'));
 
 const bytes = readFileSync(viewer3D.archive);
@@ -149,7 +172,7 @@ const result = {
   bytes: bytes.length,
   files: files.length,
   archive: viewer3D.archive,
-  consumer: 'isolated ESM runtime and strict NodeNext declarations for root and renderer exports',
+  consumer: 'isolated ESM runtime and strict NodeNext declarations for all six exports; narrow imports reject Three.js and the renderer barrel',
   evidence
 };
 writeFileSync(join(evidence, 'result.json'), JSON.stringify(result, null, 2));

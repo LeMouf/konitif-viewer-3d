@@ -106,6 +106,7 @@ import {
 } from './robotViewerMotion.js';
 import {
   createViewerProjectileLaunchSolution,
+  VIEWER3D_PROJECTILE_PARTICLE_LIMIT,
   createViewerProjectileTrajectoryPoints,
   resolveViewerProjectileChargedLaunchProfile,
   resolveViewerProjectileImpulse,
@@ -235,7 +236,7 @@ const ROBOT_VIEWER_SCRUB_PHYSICS_SYNC_MINIMUM_INTERVAL_MS = 1000 / 30;
 const ROBOT_VIEWER_PROJECTILE_MASS_KG = 0.18;
 const ROBOT_VIEWER_PROJECTILE_RADIUS_M = 0.03;
 const ROBOT_VIEWER_PROJECTILE_SETTLE_MS = 3_000;
-export const VIEWER3D_PROJECTILE_PARTICLE_LIMIT = 24;
+export { VIEWER3D_PROJECTILE_PARTICLE_LIMIT } from './ProjectileInteraction.js';
 const ROBOT_VIEWER_PROJECTILE_MAX_LIFETIME_MS = 12_000;
 const ROBOT_VIEWER_PROJECTILE_SETTLED_HOLD_MS = 1_300;
 const ROBOT_VIEWER_PROJECTILE_FADE_MS = 900;
@@ -453,6 +454,8 @@ export type RobotViewerQuaternion = {
 };
 
 export interface Viewer3DPhysicsObservation {
+  projectionStage?: 'simulated' | 'authored';
+  jointAngles?: Readonly<Record<string, number>>;
   sampleId: string;
   observedAtMs: number;
   simulatedTimeSeconds: number;
@@ -893,6 +896,7 @@ type ViewerArcballControls = ArcballControls & { readonly target: Vector3 };
 type ViewerCameraControls = OrbitControls | ViewerArcballControls;
 
 export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerExperimentPort<Artifact, Snapshot> {
+  private displayedRecordedPhysicsObservation: Viewer3DPhysicsObservation | null = null;
   readonly container: HTMLDivElement;
   readonly renderer: WebGLRenderer;
   readonly scene: Scene;
@@ -2130,6 +2134,59 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     return this.physicsService.snapshot();
   }
 
+  readDisplayedRobotObservation(timeSeconds?: number): Viewer3DPhysicsObservation | null {
+    if (!this.robot) return null;
+    const physical = this.readPhysicsObservation();
+    const jointAngles = this.captureRuntimeHistoryVisualJointStates();
+    const bodies = physical?.bodyTransforms ?? this.physicsService.getBodyTransforms();
+    const root = bodies.find(body => body.metadata?.visualRoot === true) ?? bodies.find(body => body.bodyName === this.physicsVisualRootBodyName);
+    let bodyTransforms: BodyTransform[] = [];
+    if (root && this.physicsVisualRootToRobotMatrix) {
+      this.robot.updateMatrix();
+      const robotMatrix = this.robot.matrix.clone();
+      if (this.robot.parent && this.robot.parent !== this.simulatedRobotPresentationRoot) {
+        this.robot.parent.updateMatrixWorld(true);
+        robotMatrix.premultiply(this.robot.parent.matrixWorld);
+      }
+      const canonicalMatrix = this.createPhysicsCoordinateFrameMatrix(root).invert()
+        .multiply(robotMatrix).multiply(this.physicsVisualRootToRobotMatrix.clone().invert());
+      const position = new Vector3(), rotation = new Quaternion(), scale = new Vector3();
+      canonicalMatrix.decompose(position, rotation, scale);
+      bodyTransforms = [{ ...structuredClone(root), position: { x: position.x, y: position.y, z: position.z }, rotation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w } }];
+    }
+    const time = Number.isFinite(timeSeconds) ? timeSeconds! : physical?.simulatedTimeSeconds ?? 0;
+    return {
+      sampleId: `displayed:${time}:${JSON.stringify(jointAngles)}:${JSON.stringify(bodyTransforms)}`,
+      observedAtMs: performance.now(), simulatedTimeSeconds: time,
+      jointAngles, bodyTransforms, centerOfMass: physical?.centerOfMass ?? null, navigation: null,
+      projectionStage: this.displayedRecordedPhysicsObservation ? 'simulated' : 'authored'
+    };
+  }
+
+  readPhysicsObservation(): Viewer3DPhysicsObservation | null {
+    if (this.displayedRecordedPhysicsObservation) return structuredClone(this.displayedRecordedPhysicsObservation);
+    if (this.playbackState?.animation && this.robot) {
+      const jointAngles = this.captureRuntimeHistoryVisualJointStates();
+      const time = this.playbackState.currentTime;
+      return {
+        sampleId: `displayed:${this.playbackState.sourceId ?? 'animation'}:${time}:${JSON.stringify(jointAngles)}`,
+        observedAtMs: performance.now(), simulatedTimeSeconds: time,
+        projectionStage: 'authored', jointAngles, bodyTransforms: [], centerOfMass: null, navigation: null
+      };
+    }
+    const snapshot = this.physicsService.snapshot();
+    const bodies = this.physicsService.getBodyTransforms();
+    if (!snapshot.loadedSourceId || !bodies.length) return null;
+    const metadata = snapshot.backendStatus?.metadata;
+    const time = typeof metadata?.simulatedTime === 'number' ? metadata.simulatedTime : 0;
+    return {
+      sampleId: `${snapshot.engine}:${snapshot.loadedSourceId}:${metadata?.stepCount ?? 0}:${metadata?.stateRevision ?? 0}`,
+      observedAtMs: performance.now(), simulatedTimeSeconds: time,
+      jointAngles: this.capturePhysicsVisualJointAngles(),
+      bodyTransforms: structuredClone(bodies), centerOfMass: this.physicsService.getCenterOfMass(), navigation: null
+    };
+  }
+
   readNavigationPhysicsObservation(): Viewer3DNavigationPhysicsObservation | null {
     const snapshot = this.physicsService.snapshot();
     if (
@@ -2418,6 +2475,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   resumeRuntimeHistoryLiveProjection(): void {
+    this.displayedRecordedPhysicsObservation = null;
     if (!this.runtimeHistoryReplayActive) {
       return;
     }
@@ -3573,6 +3631,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     mutedTrackTargets: readonly string[] | ReadonlySet<string> = [],
     durationOverride: number | null = null
   ): boolean {
+    this.displayedRecordedPhysicsObservation = null;
     if (!this.robot) {
       return false;
     }
@@ -5667,6 +5726,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     const receivedPhysicsSample = sampleId !== this.lastTemporalProjectionSampleId;
 
     if (receivedPhysicsSample) {
+      this.displayedRecordedPhysicsObservation = null;
       this.markFrameSignal('physics-observation');
       this.lastTemporalProjectionSampleId = sampleId;
       this.temporalProjection.ingest({
@@ -5680,6 +5740,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       });
       if (this.options.physicsObservationEnabled) {
         this.options.onPhysicsObservation({
+          jointAngles: this.capturePhysicsVisualJointAngles(),
           sampleId,
           observedAtMs: now,
           simulatedTimeSeconds: simulatedTime,
@@ -6026,6 +6087,20 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       // never the last live/bake observation left in these projection fields.
       this.projectedPhysicsBodyTransforms = bodyTransforms;
       this.projectedPhysicsCenterOfMass = centerOfMass;
+      if (viewer.physics?.enabled && bodyTransforms.length > 0) {
+        this.displayedRecordedPhysicsObservation = {
+          projectionStage: 'simulated',
+          sampleId: `recorded:${sample.id}:${sample.timeSeconds}`,
+          observedAtMs: performance.now(), simulatedTimeSeconds: sample.timeSeconds,
+          jointAngles: { ...(viewer.joints ?? {}) },
+          bodyTransforms: structuredClone(bodyTransforms),
+          centerOfMass: viewer.physics.centerOfMass ? { ...viewer.physics.centerOfMass } : null,
+          navigation: null
+        };
+        if (this.options.physicsObservationEnabled) this.options.onPhysicsObservation(structuredClone(this.displayedRecordedPhysicsObservation));
+      } else {
+        this.displayedRecordedPhysicsObservation = null;
+      }
       const hasVisualJointStates = viewer.joints && Object.keys(viewer.joints).length > 0;
       const visualJointPoseChanged = this.applyRuntimeHistoryVisualJointStates(viewer.joints ?? null);
       poseChanged = visualJointPoseChanged;
@@ -12282,73 +12357,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private resolveEyeRingCalibration(): Viewer3DEyeRingCalibration {
     const defaults = this.options.ledRingDefaults?.eyes ?? ROBOT_VIEWER_EMPTY_LED_RING_CALIBRATION;
     const calibration = this.options.eyeRingCalibration ?? {};
-    const legacyCalibration = calibration as Partial<Viewer3DEyeRingCalibration> & {
-      tiltX?: unknown;
-      tiltY?: unknown;
-    };
-
     return {
-      layout: this.resolveLedLayout(calibration.layout, defaults.layout),
-      forwardOffset: this.resolveFiniteCalibrationNumber(
-        calibration.forwardOffset,
-        defaults.forwardOffset
-      ),
-      verticalOffset: this.resolveFiniteCalibrationNumber(
-        calibration.verticalOffset,
-        defaults.verticalOffset
-      ),
-      lateralOffset: this.resolveFiniteCalibrationNumber(
-        calibration.lateralOffset,
-        defaults.lateralOffset ?? 0
-      ),
-      separation: this.resolveFiniteCalibrationNumber(
-        calibration.separation,
-        defaults.separation
-      ),
-      radius: this.resolveFiniteCalibrationNumber(
-        calibration.radius,
-        defaults.radius
-      ),
-      stripLength: this.resolveFiniteCalibrationNumber(
-        calibration.stripLength,
-        defaults.stripLength ?? defaults.radius * 2
-      ),
-      ledCount: this.resolveFiniteCalibrationNumber(
-        calibration.ledCount,
-        defaults.ledCount
-      ),
-      ledSize: this.resolveFiniteCalibrationNumber(
-        calibration.ledSize,
-        defaults.ledSize
-      ),
-      rotationX: this.resolveFiniteCalibrationNumber(
-        calibration.rotationX,
-        defaults.rotationX
-      ),
-      rotationY: this.resolveFiniteCalibrationNumber(
-        calibration.rotationY ?? legacyCalibration.tiltY,
-        defaults.rotationY
-      ),
-      rotationZ: this.resolveFiniteCalibrationNumber(
-        calibration.rotationZ ?? legacyCalibration.tiltX,
-        defaults.rotationZ
-      ),
-      isVisible:
-        typeof calibration.isVisible === 'boolean'
-          ? calibration.isVisible
-          : defaults.isVisible,
-      mireVisible:
-        typeof calibration.mireVisible === 'boolean'
-          ? calibration.mireVisible
-          : defaults.mireVisible,
-      variantCount: this.resolveFiniteCalibrationNumber(
-        calibration.variantCount,
-        defaults.variantCount
-      ),
-      variantStep: this.resolveFiniteCalibrationNumber(
-        calibration.variantStep,
-        defaults.variantStep
-      ),
+      ...resolveViewerLedRingCalibration(calibration, defaults),
       zones: this.resolveLedRingCalibrationZones(calibration.zones)
     };
   }
@@ -12396,42 +12406,12 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   }
 
-  private resolveLedLayout(value: unknown, fallback: unknown = 'circle'): 'circle' | 'strip' {
-    if (value === 'strip' || value === 'circle') return value;
-    return fallback === 'strip' ? 'strip' : 'circle';
-  }
-
   private resolveLedRingZoneCalibration(
     calibration: Viewer3DEyeRingCalibration,
     zoneId: Viewer3DLedRingZoneId
   ): Viewer3DLedRingCalibration {
-    const base =
-      zoneId === 'eyes'
-        ? calibration
-        : (this.options.ledRingDefaults?.[zoneId] ?? ROBOT_VIEWER_EMPTY_LED_RING_CALIBRATION);
-    const override = calibration.zones?.[zoneId] ?? {};
-
-    return {
-      layout: this.resolveLedLayout(override.layout, base.layout),
-      forwardOffset: this.resolveFiniteCalibrationNumber(override.forwardOffset, base.forwardOffset),
-      verticalOffset: this.resolveFiniteCalibrationNumber(override.verticalOffset, base.verticalOffset),
-      lateralOffset: this.resolveFiniteCalibrationNumber(override.lateralOffset, base.lateralOffset ?? 0),
-      separation: this.resolveFiniteCalibrationNumber(override.separation, base.separation),
-      radius: this.resolveFiniteCalibrationNumber(override.radius, base.radius),
-      stripLength: this.resolveFiniteCalibrationNumber(
-        override.stripLength,
-        base.stripLength ?? base.radius * 2
-      ),
-      ledCount: this.resolveFiniteCalibrationNumber(override.ledCount, base.ledCount),
-      ledSize: this.resolveFiniteCalibrationNumber(override.ledSize, base.ledSize),
-      rotationX: this.resolveFiniteCalibrationNumber(override.rotationX, base.rotationX),
-      rotationY: this.resolveFiniteCalibrationNumber(override.rotationY, base.rotationY),
-      rotationZ: this.resolveFiniteCalibrationNumber(override.rotationZ, base.rotationZ),
-      isVisible: typeof override.isVisible === 'boolean' ? override.isVisible : base.isVisible,
-      mireVisible: typeof override.mireVisible === 'boolean' ? override.mireVisible : base.mireVisible,
-      variantCount: this.resolveFiniteCalibrationNumber(override.variantCount, base.variantCount),
-      variantStep: this.resolveFiniteCalibrationNumber(override.variantStep, base.variantStep)
-    };
+    const base = zoneId === 'eyes' ? calibration : (this.options.ledRingDefaults?.[zoneId] ?? ROBOT_VIEWER_EMPTY_LED_RING_CALIBRATION);
+    return resolveViewerLedRingCalibration(calibration.zones?.[zoneId], base);
   }
 
   private resolveEyeRingDebugDimensions(calibration: Viewer3DLedRingCalibration): number[] {
@@ -14375,3 +14355,4 @@ function sampleNavigationPath(points: readonly Vector3[], progress: number): Vec
   }
   return points[points.length - 1]?.clone() ?? new Vector3();
 }
+import { resolveViewerLedRingCalibration } from '../ledRingCalibration.js';

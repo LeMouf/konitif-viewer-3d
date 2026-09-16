@@ -4,6 +4,16 @@
   "intent": "Project a subject into a 3D scene without granting the view authority over the subject.",
   "clusters": [
     {
+      "id": "orientation-projection",
+      "title": "Camera orientation projection",
+      "summary": "Pure camera quaternion projection into a CSS orientation compass.",
+      "authority": "Derived view rotation; the camera remains the orientation authority.",
+      "owns": ["quaternion normalization", "camera-to-view rotation", "CSS axis bridge"],
+      "doesNotOwn": ["camera state", "DOM", "subject pose"],
+      "workflow": ["Observe", "Normalize", "Project"],
+      "symbolNames": ["ViewerOrientationQuaternion", "resolveViewerOrientationGizmoTransform", "createViewerOrientationGizmoMatrix"]
+    },
+    {
       "id": "spatial-contracts",
       "title": "Spatial contracts",
       "summary": "Geometric values for the 3D projection.",

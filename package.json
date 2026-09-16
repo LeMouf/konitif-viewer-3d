@@ -1,7 +1,7 @@
 {
   "name": "@konitif/viewer-3d",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "version": "0.285.0",
+  "version": "0.285.1",
   "private": false,
   "type": "module",
   "description": "Three.js spatial projection contracts and an explicit-provider renderer for KONITIF viewers.",
@@ -23,6 +23,22 @@
     "./renderer": {
       "types": "./dist/renderer/index.d.ts",
       "import": "./dist/renderer/index.js"
+    },
+    "./orientation": {
+      "types": "./dist/orientationGizmoProjection.d.ts",
+      "import": "./dist/orientationGizmoProjection.js"
+    },
+    "./visual-ground": {
+      "types": "./dist/visualGroundConfig.d.ts",
+      "import": "./dist/visualGroundConfig.js"
+    },
+    "./projectile": {
+      "types": "./dist/renderer/ProjectileInteraction.d.ts",
+      "import": "./dist/renderer/ProjectileInteraction.js"
+    },
+    "./led-calibration": {
+      "types": "./dist/ledRingCalibration.d.ts",
+      "import": "./dist/ledRingCalibration.js"
     }
   },
   "files": [

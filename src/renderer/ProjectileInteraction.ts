@@ -1,3 +1,6 @@
+/** Shared visual particle capacity; no simulation or subject policy. */
+export const VIEWER3D_PROJECTILE_PARTICLE_LIMIT = 24;
+
 export interface ViewerProjectileVector3 {
   x: number;
   y: number;

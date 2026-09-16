@@ -12,6 +12,7 @@ npm install @konitif/viewer-3d
 ## What it provides
 
 - Three-dimensional vectors, transforms, scene snapshots and intents.
+- Camera-derived orientation compass math with no DOM or renderer dependency.
 - A Workbench tool declaration for a spatial projection.
 - Data-only definitions for articulated transforms, supports, contacts, mass
   properties, landmarks and emitter placement.
@@ -49,6 +50,20 @@ explicit providers are required.
 | --- | --- |
 | `@konitif/viewer-3d` | Spatial contracts, definitions and scene helpers. |
 | `@konitif/viewer-3d/renderer` | Three.js projection runtime and diagnostics. |
+| `@konitif/viewer-3d/visual-ground` | Ground contracts, defaults and normalization without Three.js. |
+| `@konitif/viewer-3d/orientation` | Pure camera quaternion-to-CSS orientation projection. |
+| `@konitif/viewer-3d/led-calibration` | Numeric LED group calibration with explicit subject defaults, without Three.js. |
+| `@konitif/viewer-3d/projectile` | Headless launch, trajectory, ground-step and visual capacity helpers. |
+
+The orientation entry observes the camera quaternion and derives its inverse
+view rotation. It never accumulates an independent orientation or owns a camera.
+It can be used without importing Three.js or a browser component:
+
+```ts
+import { resolveViewerOrientationGizmoTransform } from '@konitif/viewer-3d/orientation';
+
+const transform = resolveViewerOrientationGizmoTransform({ x: 0, y: 0, z: 0, w: 1 });
+```
 
 ## Reference
 

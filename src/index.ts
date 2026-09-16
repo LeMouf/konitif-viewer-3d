@@ -75,3 +75,6 @@ export type { ViewerHandTipDefinition } from './handTipDefinition.js';
 export type { ViewerLedLayout, ViewerLedRingCalibration } from './ledRingCalibration.js';
 export type { ViewerLedReferenceFrame } from './ledReferenceFrame.js';
 export type { ViewerLedPlacementDefinition } from './ledPlacementDefinition.js';
+
+export * from './orientationGizmoProjection.js';
+export * from './visualGroundConfig.js';

@@ -19,7 +19,7 @@ test('the package and lock bind the qualified 3D projection closure', () => {
   const lock = json('package-lock.json');
 
   assert.equal(manifest.name, '@konitif/viewer-3d');
-  assert.equal(manifest.version, '0.285.0');
+  assert.match(manifest.version, /^0\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
   assert.equal(manifest.private, false);
   assert.equal(manifest.repository.url, 'git+https://github.com/LeMouf/konitif-viewer-3d.git');
   assert.deepEqual(manifest.publishConfig, {
@@ -38,6 +38,7 @@ test('the package and lock bind the qualified 3D projection closure', () => {
   assert.deepEqual(manifest.files, ['LICENSE.md', 'dist', 'README.md', 'package.json', 'reference']);
   assert.equal(lock.name, manifest.name);
   assert.equal(lock.version, manifest.version);
+  assert.equal(lock.packages[''].version, manifest.version);
   assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies);
   assert.deepEqual(lock.packages[''].devDependencies, manifest.devDependencies);
   assert.deepEqual(Object.keys(lock.packages).sort(), [
@@ -63,7 +64,10 @@ test('the package and lock bind the qualified 3D projection closure', () => {
 
 test('Viewer remains amodal while this package owns only the 3D projection', () => {
   const files = sourceFiles(join(root, 'src')).sort();
-  assert.equal(files.length, 43);
+  assert.equal(files.length, 45);
+  const manifest = json('package.json');
+  assert.deepEqual(manifest.exports['./orientation'], { types: './dist/orientationGizmoProjection.d.ts', import: './dist/orientationGizmoProjection.js' });
+  assert.deepEqual(manifest.exports['./visual-ground'], { types: './dist/visualGroundConfig.d.ts', import: './dist/visualGroundConfig.js' });
 
   for (const file of files) {
     const source = readFileSync(file, 'utf8');
