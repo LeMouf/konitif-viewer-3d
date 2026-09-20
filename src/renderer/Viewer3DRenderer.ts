@@ -1132,6 +1132,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private lastRuntimeHistorySampleAt = 0;
   private unsubscribeRuntimeHistory = () => {};
   private lastRuntimeHistoryReplaySignature = '';
+  private runtimeHistoryReplayState: ViewerHistoryObservation<ViewerHistorySample<ViewerMetadata>>['replayState'] = 'live';
   private runtimeHistoryReplayActive = false;
   private runtimeHistoryProjectionRequiresPhysicsRebase = false;
   private runtimeHistoryProjectedPhysicsRootPose: PhysicsRootPose | null = null;
@@ -2361,6 +2362,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   inspectRuntimeHistorySnapshot(snapshot: ViewerHistoryObservation<ViewerHistorySample<ViewerMetadata>>): void {
+    this.runtimeHistoryReplayState = snapshot.replayState;
     if (snapshot.replayState === 'live') {
       // Recording publishes a live snapshot for every captured sample. Treat
       // those notifications as observations, not replay-mode transitions:
@@ -5963,7 +5965,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       return;
     }
 
-    if (recorder.snapshot().replayState !== 'live') {
+    // The subscription already tracks this scalar. Calling snapshot() here
+    // copied the complete, growing history once again for every baked frame.
+    if (this.runtimeHistoryReplayState !== 'live') {
       return;
     }
 
