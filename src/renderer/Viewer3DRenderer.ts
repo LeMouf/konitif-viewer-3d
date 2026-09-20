@@ -576,6 +576,10 @@ export interface Viewer3DOptions<Artifact = unknown, Snapshot = unknown> {
   physicsObservationEnabled?: boolean;
   onTemporalProjectionStatus?: (status: ViewerTemporalProjectionStatus) => void;
   onPhysicsObservation?: (observation: Viewer3DPhysicsObservation) => void;
+  onComparisonPhysicsObservation?: (
+    profileId: string,
+    observation: Viewer3DPhysicsObservation
+  ) => void;
   onCameraInteractionStart?: () => void;
   cameraPosition?: RobotViewerVector;
   cameraTarget?: RobotViewerVector;
@@ -1313,9 +1317,12 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       temporalProjectionBufferDelayMs: options.temporalProjectionBufferDelayMs ?? 1000 / 30,
       temporalProjectionMaxSampleGapMs: options.temporalProjectionMaxSampleGapMs ?? 120,
       physicsObservationEnabled:
-        options.physicsObservationEnabled ?? typeof options.onPhysicsObservation === 'function',
+        options.physicsObservationEnabled ??
+        (typeof options.onPhysicsObservation === 'function' ||
+          typeof options.onComparisonPhysicsObservation === 'function'),
       onTemporalProjectionStatus: options.onTemporalProjectionStatus ?? (() => {}),
       onPhysicsObservation: options.onPhysicsObservation ?? (() => {}),
+      onComparisonPhysicsObservation: options.onComparisonPhysicsObservation ?? (() => {}),
       onCameraInteractionStart: options.onCameraInteractionStart ?? (() => {}),
       cameraPosition: options.cameraPosition ?? VIEWER3D_DEFAULT_CAMERA_POSITION,
       cameraTarget: options.cameraTarget ?? VIEWER3D_DEFAULT_CAMERA_TARGET,
@@ -6093,6 +6100,28 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           ? (comparison.viewer as unknown as ViewerHistorySample<ViewerMetadata>['viewer'])
           : null;
       this.projectComparisonSimulation();
+      const comparisonViewer = this.comparisonViewerSample;
+      const comparisonBodyTransforms = (comparisonViewer?.physics?.bodyTransforms ?? []).map((transform) =>
+        this.deserializeRuntimeHistoryTransform(transform, false)
+      );
+      if (
+        comparisonViewer?.physics?.enabled &&
+        comparisonBodyTransforms.length > 0 &&
+        this.options.physicsObservationEnabled
+      ) {
+        this.options.onComparisonPhysicsObservation(this.comparisonProfileId, {
+          projectionStage: 'simulated',
+          sampleId: `recorded-comparison:${sample.id}:${sample.timeSeconds}`,
+          observedAtMs: performance.now(),
+          simulatedTimeSeconds: sample.timeSeconds,
+          jointAngles: { ...(comparisonViewer.joints ?? {}) },
+          bodyTransforms: structuredClone(comparisonBodyTransforms),
+          centerOfMass: comparisonViewer.physics.centerOfMass
+            ? { ...comparisonViewer.physics.centerOfMass }
+            : null,
+          navigation: null
+        });
+      }
     }
 
     if (!viewer) {
