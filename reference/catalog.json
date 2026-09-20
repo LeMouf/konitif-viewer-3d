@@ -8,10 +8,27 @@
       "title": "Camera orientation projection",
       "summary": "Pure camera quaternion projection into a CSS orientation compass.",
       "authority": "Derived view rotation; the camera remains the orientation authority.",
-      "owns": ["quaternion normalization", "camera-to-view rotation", "CSS axis bridge"],
-      "doesNotOwn": ["camera state", "DOM", "subject pose"],
-      "workflow": ["Observe", "Normalize", "Project"],
-      "symbolNames": ["ViewerOrientationQuaternion", "resolveViewerOrientationGizmoTransform", "createViewerOrientationGizmoMatrix"]
+      "owns": [
+        "quaternion normalization",
+        "camera-to-view rotation",
+        "CSS axis bridge"
+      ],
+      "doesNotOwn": [
+        "camera state",
+        "DOM",
+        "subject pose"
+      ],
+      "workflow": [
+        "Observe",
+        "Normalize",
+        "Project"
+      ],
+      "symbolNames": [
+        "ViewerOrientationQuaternion",
+        "resolveViewerOrientationGizmoTransform",
+        "createViewerOrientationGizmoMatrix",
+        "VIEWER_ORIENTATION_GIZMO_IDENTITY_TRANSFORM"
+      ]
     },
     {
       "id": "spatial-contracts",
@@ -57,7 +74,23 @@
       "symbolNames": [
         "Viewer3DSceneSnapshot",
         "Viewer3DPort",
-        "createViewer3DSceneSnapshot"
+        "createViewer3DSceneSnapshot",
+        "DEFAULT_VIEWER_VISUAL_GROUND_CONFIG",
+        "DEFAULT_VIEWER_VISUAL_GROUND_PALETTE",
+        "normalizeViewerVisualGroundConfig",
+        "ViewerBalanceFootprintDefinition",
+        "ViewerDiagnosticContactDefinition",
+        "ViewerHandTipDefinition",
+        "ViewerJointHandleDefinition",
+        "ViewerLedLayout",
+        "ViewerLedPlacementDefinition",
+        "ViewerLedReferenceFrame",
+        "ViewerLedRingCalibration",
+        "ViewerSupportDefinition",
+        "ViewerVisualGroundComponentId",
+        "ViewerVisualGroundComponents",
+        "ViewerVisualGroundConfig",
+        "ViewerVisualGroundOptions"
       ]
     },
     {
