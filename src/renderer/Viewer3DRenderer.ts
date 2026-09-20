@@ -576,6 +576,10 @@ export interface Viewer3DOptions<Artifact = unknown, Snapshot = unknown> {
   physicsObservationEnabled?: boolean;
   onTemporalProjectionStatus?: (status: ViewerTemporalProjectionStatus) => void;
   onPhysicsObservation?: (observation: Viewer3DPhysicsObservation) => void;
+  onComparisonPhysicsObservation?: (
+    profileId: string,
+    observation: Viewer3DPhysicsObservation
+  ) => void;
   onCameraInteractionStart?: () => void;
   cameraPosition?: RobotViewerVector;
   cameraTarget?: RobotViewerVector;
@@ -933,6 +937,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private cameraTransitionActive = false;
   private readonly observedRobotGhostBasePosition = new Vector3();
   private readonly observedRobotGhostBaseQuaternion = new Quaternion();
+  private readonly observedRobotGhostBaseScale = new Vector3(1, 1, 1);
   private observedRobotTemporalSupportAnchorState: ObservedRobotTemporalSupportAnchorState | null = null;
   private observedRobotGrounding: ObservedRobotGroundingProjection = resolveObservedRobotGroundingProjection({
     enabled: false,
@@ -1127,6 +1132,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private lastRuntimeHistorySampleAt = 0;
   private unsubscribeRuntimeHistory = () => {};
   private lastRuntimeHistoryReplaySignature = '';
+  private runtimeHistoryReplayState: ViewerHistoryObservation<ViewerHistorySample<ViewerMetadata>>['replayState'] = 'live';
   private runtimeHistoryReplayActive = false;
   private runtimeHistoryProjectionRequiresPhysicsRebase = false;
   private runtimeHistoryProjectedPhysicsRootPose: PhysicsRootPose | null = null;
@@ -1312,9 +1318,12 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       temporalProjectionBufferDelayMs: options.temporalProjectionBufferDelayMs ?? 1000 / 30,
       temporalProjectionMaxSampleGapMs: options.temporalProjectionMaxSampleGapMs ?? 120,
       physicsObservationEnabled:
-        options.physicsObservationEnabled ?? typeof options.onPhysicsObservation === 'function',
+        options.physicsObservationEnabled ??
+        (typeof options.onPhysicsObservation === 'function' ||
+          typeof options.onComparisonPhysicsObservation === 'function'),
       onTemporalProjectionStatus: options.onTemporalProjectionStatus ?? (() => {}),
       onPhysicsObservation: options.onPhysicsObservation ?? (() => {}),
+      onComparisonPhysicsObservation: options.onComparisonPhysicsObservation ?? (() => {}),
       onCameraInteractionStart: options.onCameraInteractionStart ?? (() => {}),
       cameraPosition: options.cameraPosition ?? VIEWER3D_DEFAULT_CAMERA_POSITION,
       cameraTarget: options.cameraTarget ?? VIEWER3D_DEFAULT_CAMERA_TARGET,
@@ -1632,6 +1641,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.configureObservedRobotGhostMaterials(robot);
     this.observedRobotGhostBasePosition.copy(robot.position);
     this.observedRobotGhostBaseQuaternion.copy(robot.quaternion);
+    this.observedRobotGhostBaseScale.copy(robot.scale);
     robot.name = robot.name ? `${robot.name}:observed-ghost` : 'observed-robot-ghost';
     robot.visible = this.options.showObservedRobotGhost;
     if (!this.observedRobotPresentationRoot.parent) {
@@ -1679,11 +1689,24 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     );
     const root = transforms.find((body) => body.metadata?.visualRoot === true);
     const robot = this.observedRobotGhost;
-    robot.visible = Boolean(root && this.options.showObservedRobotGhost);
+    robot.visible = this.options.showObservedRobotGhost;
     this.comparisonColliderGroup.visible = Boolean(
       root && (this.options.showPhysicsColliders || this.options.showPhysicsCenterOfMass) && robot.visible
     );
-    if (!root || !sample) return;
+    if (!root || !sample) {
+      // Asset visibility is independent from runtime physics availability. A
+      // comparison peer must remain inspectable while its first frame arrives.
+      robot.position.copy(this.observedRobotGhostBasePosition);
+      robot.quaternion.copy(this.observedRobotGhostBaseQuaternion);
+      robot.scale.copy(this.observedRobotGhostBaseScale);
+      if (this.robotComparisonAppearance.mode === 'offset') {
+        robot.position.x +=
+          this.robotComparisonAppearance.offsetMeters /
+          (this.robotComparisonAppearance.centeredSeparation ? 2 : 1);
+      }
+      this.groundSimulatedRobotOnSupportFloor(robot);
+      return;
+    }
     const joints = (robot as { joints?: Record<string, RobotJointLike> }).joints ?? {};
     for (const [name, value] of Object.entries(sample.joints ?? {})) {
       if (Number.isFinite(value)) joints[name]?.setJointValue(value);
@@ -2112,6 +2135,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.physicsVisualRootToRobotMatrix = null;
     this.physicsAuthoredJointTargets.clear();
     this.resetPhysicsPostureCompensation();
+    this.comparisonViewerSample = null;
+    this.projectComparisonSimulation();
     this.restorePhysicsResetRobotState();
     await this.physicsService.resetSimulation();
     if (this.destroyed) return;
@@ -2337,6 +2362,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   inspectRuntimeHistorySnapshot(snapshot: ViewerHistoryObservation<ViewerHistorySample<ViewerMetadata>>): void {
+    this.runtimeHistoryReplayState = snapshot.replayState;
     if (snapshot.replayState === 'live') {
       // Recording publishes a live snapshot for every captured sample. Treat
       // those notifications as observations, not replay-mode transitions:
@@ -5939,7 +5965,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       return;
     }
 
-    if (recorder.snapshot().replayState !== 'live') {
+    // The subscription already tracks this scalar. Calling snapshot() here
+    // copied the complete, growing history once again for every baked frame.
+    if (this.runtimeHistoryReplayState !== 'live') {
       return;
     }
 
@@ -6076,6 +6104,28 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           ? (comparison.viewer as unknown as ViewerHistorySample<ViewerMetadata>['viewer'])
           : null;
       this.projectComparisonSimulation();
+      const comparisonViewer = this.comparisonViewerSample;
+      const comparisonBodyTransforms = (comparisonViewer?.physics?.bodyTransforms ?? []).map((transform) =>
+        this.deserializeRuntimeHistoryTransform(transform, false)
+      );
+      if (
+        comparisonViewer?.physics?.enabled &&
+        comparisonBodyTransforms.length > 0 &&
+        this.options.physicsObservationEnabled
+      ) {
+        this.options.onComparisonPhysicsObservation(this.comparisonProfileId, {
+          projectionStage: 'simulated',
+          sampleId: `recorded-comparison:${sample.id}:${sample.timeSeconds}`,
+          observedAtMs: performance.now(),
+          simulatedTimeSeconds: sample.timeSeconds,
+          jointAngles: { ...(comparisonViewer.joints ?? {}) },
+          bodyTransforms: structuredClone(comparisonBodyTransforms),
+          centerOfMass: comparisonViewer.physics.centerOfMass
+            ? { ...comparisonViewer.physics.centerOfMass }
+            : null,
+          navigation: null
+        });
+      }
     }
 
     if (!viewer) {
@@ -6954,6 +7004,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     });
     this.observedRobotGhost = null;
     this.observedRobotGhostBaseQuaternion.identity();
+    this.observedRobotGhostBaseScale.set(1, 1, 1);
     this.observedRobotGhostMaterialBaselines.clear();
     this.observedRobotGhostRenderOrderBaselines.clear();
     this.observedRobotGrounding = resolveObservedRobotGroundingProjection({
@@ -6989,6 +7040,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     if (this.observedRobotGhost) {
       this.observedRobotGhost.position.copy(this.observedRobotGhostBasePosition);
       this.observedRobotGhost.quaternion.copy(this.observedRobotGhostBaseQuaternion);
+      this.observedRobotGhost.scale.copy(this.observedRobotGhostBaseScale);
       if (observedRobotVisible && this.robotComparisonAppearance.mode === 'offset') {
         if (this.robotComparisonAppearance.centeredSeparation) {
           const halfSeparation = this.robotComparisonAppearance.offsetMeters / 2;
