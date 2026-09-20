@@ -454,6 +454,8 @@ export type RobotViewerQuaternion = {
 };
 
 export interface Viewer3DPhysicsObservation {
+  /** Root of the displayed projection, expressed in the physics ground frame. */
+  rootTransform?: BodyTransform;
   projectionStage?: 'simulated' | 'authored';
   jointAngles?: Readonly<Record<string, number>>;
   sampleId: string;
@@ -2134,14 +2136,35 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     return this.physicsService.snapshot();
   }
 
+  /** Project an already assembled URDF root; presentation offsets are excluded. */
+  readDisplayedRobotRootTransform(
+    target: 'simulated' | 'observed',
+    frame: { bodyName: string; coordinateFrame: 'mujoco-z-up'; sceneYawRadians: number }
+  ): BodyTransform | null {
+    const robot = target === 'observed' ? this.observedRobotGhost : this.robot;
+    if (!robot) return null;
+    // A hidden ghost still supplies its grounded projection to external viewers.
+    if (target === 'observed') this.applyObservedRobotGhostGrounding();
+    robot.updateMatrix();
+    const reference = { bodyName: frame.bodyName, position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      metadata: { visualRoot: true, coordinateFrame: frame.coordinateFrame, sceneYawRadians: frame.sceneYawRadians } } as BodyTransform;
+    const canonical = this.createPhysicsCoordinateFrameMatrix(reference).invert().multiply(robot.matrix);
+    const position = new Vector3(), rotation = new Quaternion(), scale = new Vector3();
+    canonical.decompose(position, rotation, scale);
+    return { ...reference, position: { x: position.x, y: position.y, z: position.z },
+      rotation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w } };
+  }
+
   readDisplayedRobotObservation(timeSeconds?: number): Viewer3DPhysicsObservation | null {
     if (!this.robot) return null;
     const physical = this.readPhysicsObservation();
     const jointAngles = this.captureRuntimeHistoryVisualJointStates();
-    const bodies = physical?.bodyTransforms ?? this.physicsService.getBodyTransforms();
+    const bodies = this.projectedPhysicsBodyTransforms.length ? this.projectedPhysicsBodyTransforms : physical?.bodyTransforms.length ? physical.bodyTransforms : this.physicsService.getBodyTransforms();
     const root = bodies.find(body => body.metadata?.visualRoot === true) ?? bodies.find(body => body.bodyName === this.physicsVisualRootBodyName);
-    let bodyTransforms: BodyTransform[] = [];
-    if (root && this.physicsVisualRootToRobotMatrix) {
+    let rootTransform: BodyTransform | undefined;
+    const alignment = root ? this.physicsVisualRootToRobotMatrix ?? this.resolvePhysicsVisualRootToRobotMatrix(this.createPhysicsBodyViewerWorldMatrix(root), bodies) : null;
+    if (root && alignment) {
       this.robot.updateMatrix();
       const robotMatrix = this.robot.matrix.clone();
       if (this.robot.parent && this.robot.parent !== this.simulatedRobotPresentationRoot) {
@@ -2149,16 +2172,16 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
         robotMatrix.premultiply(this.robot.parent.matrixWorld);
       }
       const canonicalMatrix = this.createPhysicsCoordinateFrameMatrix(root).invert()
-        .multiply(robotMatrix).multiply(this.physicsVisualRootToRobotMatrix.clone().invert());
+        .multiply(robotMatrix).multiply(alignment.clone().invert());
       const position = new Vector3(), rotation = new Quaternion(), scale = new Vector3();
       canonicalMatrix.decompose(position, rotation, scale);
-      bodyTransforms = [{ ...structuredClone(root), position: { x: position.x, y: position.y, z: position.z }, rotation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w } }];
+      rootTransform = { ...structuredClone(root), position: { x: position.x, y: position.y, z: position.z }, rotation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w } };
     }
     const time = Number.isFinite(timeSeconds) ? timeSeconds! : physical?.simulatedTimeSeconds ?? 0;
     return {
-      sampleId: `displayed:${time}:${JSON.stringify(jointAngles)}:${JSON.stringify(bodyTransforms)}`,
+      sampleId: `displayed:${time}:${JSON.stringify(jointAngles)}:${JSON.stringify(rootTransform)}`,
       observedAtMs: performance.now(), simulatedTimeSeconds: time,
-      jointAngles, bodyTransforms, centerOfMass: physical?.centerOfMass ?? null, navigation: null,
+      jointAngles, rootTransform, bodyTransforms: structuredClone(bodies), centerOfMass: this.projectedPhysicsCenterOfMass ?? physical?.centerOfMass ?? this.physicsService.getCenterOfMass(), navigation: null,
       projectionStage: this.displayedRecordedPhysicsObservation ? 'simulated' : 'authored'
     };
   }
@@ -3533,6 +3556,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     if (!transition) {
       this.boundaryPosePreviewTransitionState = null;
+      this.groundSimulatedRobotOnSupportFloor(this.robot);
+      this.syncPhysicsKinematicPoseFromRobotPose({ holdFrames: 0, clearDynamics: true, resetCadence: false });
+      this.updateViewerDebugLayers();
       this.requestRender();
       return true;
     }
@@ -4269,6 +4295,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     }
 
     if (poseChanged) {
+      // A catalogue pose owns joint angles, not the previous incarnation's root height.
+      // Ground only this authored preview; recorded physical samples retain their root.
+      if (this.robot) this.groundSimulatedRobotOnSupportFloor(this.robot);
       this.robot?.updateMatrixWorld(true);
       this.updateViewerDebugLayers();
       this.syncPhysicsKinematicPoseFromRobotPose({
