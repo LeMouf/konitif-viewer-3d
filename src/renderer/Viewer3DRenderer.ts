@@ -59,6 +59,7 @@ import {
   HemisphereLight,
   Line,
   LineBasicMaterial,
+  LineSegments,
   Matrix4,
   MathUtils,
   Mesh,
@@ -1110,6 +1111,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private poseHandleDragStarted = false;
   private poseHandleControlsWereEnabled = false;
   private ledStateProjection: Viewer3DLedStateProjection = { visible: false, zones: {} };
+  private readonly ledMeshBaseColors = new WeakMap<BufferGeometry, Float32Array>();
   private suppressPoseHandleClickUntil = 0;
   private poseEditBaseline: Record<string, number> | null = null;
   private dirtyPose = false;
@@ -2979,7 +2981,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     this.options.showEyeRingDebug = showEyeRingDebug;
 
-    if (showEyeRingDebug || this.options.showEyeRingMire) {
+    if (showEyeRingDebug || this.options.showEyeRingMire || this.ledStateProjection.visible) {
       this.updateEyeRingDebug();
     } else {
       this.updateEyeRingDebugVisibility();
@@ -2995,7 +2997,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     this.options.showEyeRingMire = showEyeRingMire;
 
-    if (showEyeRingMire || this.options.showEyeRingDebug) {
+    if (showEyeRingMire || this.options.showEyeRingDebug || this.ledStateProjection.visible) {
       this.updateEyeRingDebug();
     } else {
       this.updateEyeRingDebugVisibility();
@@ -3007,7 +3009,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   setEyeRingCalibration(eyeRingCalibration: Partial<Viewer3DEyeRingCalibration>): void {
     this.options.eyeRingCalibration = eyeRingCalibration;
 
-    if (this.options.showEyeRingDebug || this.options.showEyeRingMire) {
+    if (this.options.showEyeRingDebug || this.options.showEyeRingMire || this.ledStateProjection.visible) {
       this.updateEyeRingDebug();
     }
 
@@ -3036,6 +3038,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     if (this.ledStateProjection.visible || this.options.showEyeRingDebug || this.options.showEyeRingMire) {
       this.updateEyeRingDebug();
     } else {
+      const robot = this.getPoseControlRobot();
+      if (robot) this.updateEarMeshDiffusers(robot, []);
       this.updateEyeRingDebugVisibility();
     }
     this.requestRender();
@@ -8601,7 +8605,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.updateContactPoints();
     }
 
-    if (this.options.showEyeRingDebug || this.options.showEyeRingMire) {
+    if (this.options.showEyeRingDebug || this.options.showEyeRingMire || this.ledStateProjection.visible) {
       this.updateEyeRingDebug();
     }
 
@@ -12413,6 +12417,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private updateEyeRingDebug(): void {
     const robot = this.getPoseControlRobot();
     if ((!this.options.showEyeRingDebug && !this.options.showEyeRingMire && !this.ledStateProjection.visible) || !robot) {
+      if (robot) this.updateEarMeshDiffusers(robot, []);
       this.updateEyeRingDebugVisibility();
       return;
     }
@@ -12420,6 +12425,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     robot.updateMatrixWorld(true);
     const calibration = this.resolveEyeRingCalibration();
     const ledRingPoses = this.resolveLedRingPoses(calibration);
+    this.updateEarMeshDiffusers(
+      robot,
+      ledRingPoses.filter((pose) => pose.zoneId === 'ears')
+    );
 
     if (ledRingPoses.length === 0) {
       this.clearEyeRingDebug();
@@ -12447,6 +12456,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
               )
             );
           }
+        }
+
+        if (ring.zoneId === 'ears' && this.ledStateProjection.visible) {
+          group.add(...this.createEarSpeakerGrille(ring));
+          continue;
         }
 
         for (let index = 0; index < ledCount; index += 1) {
@@ -12902,6 +12916,158 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     );
     marker.renderOrder = 1000;
     return marker;
+  }
+
+  /** The speaker grille stays dark; only its peripheral diffuser receives LED light. */
+  private createEarSpeakerGrille(ear: Viewer3DLedRingPose): [Mesh, LineSegments] {
+    const normal = new Vector3(0, 1, 0).applyQuaternion(ear.orientation).normalize();
+    const surface = new Mesh(
+      new CircleGeometry(ear.radius * 0.76, 72),
+      new MeshBasicMaterial({
+        color: '#070a0d',
+        transparent: true,
+        opacity: 0.96,
+        depthTest: true,
+        depthWrite: false,
+        side: DoubleSide
+      })
+    );
+    surface.geometry.rotateX(-Math.PI * 0.5);
+    surface.position.copy(ear.center).addScaledVector(normal, 0.00035);
+    surface.quaternion.copy(ear.orientation);
+    surface.name = `${ear.id}-speaker-grille-surface`;
+    surface.renderOrder = 996;
+
+    const grilleRadius = ear.radius * 0.70;
+    const cellRadius = Math.max(0.0012, ear.radius * 0.082);
+    const columnStep = Math.sqrt(3) * cellRadius;
+    const rowStep = cellRadius * 1.5;
+    const points: Vector3[] = [];
+
+    for (let row = -9; row <= 9; row += 1) {
+      for (let column = -9; column <= 9; column += 1) {
+        const centerX = column * columnStep + (Math.abs(row) % 2) * columnStep * 0.5;
+        const centerZ = row * rowStep;
+        if (Math.hypot(centerX, centerZ) + cellRadius > grilleRadius) continue;
+
+        for (let edge = 0; edge < 6; edge += 1) {
+          const angleA = Math.PI / 6 + edge * Math.PI / 3;
+          const angleB = Math.PI / 6 + ((edge + 1) % 6) * Math.PI / 3;
+          points.push(
+            new Vector3(centerX + Math.cos(angleA) * cellRadius, 0, centerZ + Math.sin(angleA) * cellRadius),
+            new Vector3(centerX + Math.cos(angleB) * cellRadius, 0, centerZ + Math.sin(angleB) * cellRadius)
+          );
+        }
+      }
+    }
+
+    const lattice = new LineSegments(
+      new BufferGeometry().setFromPoints(points),
+      new LineBasicMaterial({
+        color: '#59616b',
+        transparent: true,
+        opacity: 0.9,
+        depthTest: true,
+        depthWrite: false
+      })
+    );
+    lattice.position.copy(ear.center).addScaledVector(normal, 0.00055);
+    lattice.quaternion.copy(ear.orientation);
+    lattice.name = `${ear.id}-speaker-grille-lattice`;
+    lattice.renderOrder = 997;
+    return [surface, lattice];
+  }
+
+  /** Projects the timeline colors onto the authored outer ear diffuser band. */
+  private updateEarMeshDiffusers(robot: Object3D, ears: Viewer3DLedRingPose[]): boolean {
+    const zoneState = this.ledStateProjection.zones.ears;
+    const intensity = Math.max(0, Math.min(1, zoneState?.intensity ?? 0.25));
+    const sourceColors = zoneState?.colors?.length ? zoneState.colors : null;
+    const earFrames = ears.map((ear) => {
+      const count = Math.max(3, Math.min(32, Math.round(ear.calibration.ledCount)));
+      return {
+        ear,
+        inverseOrientation: ear.orientation.clone().invert(),
+        colors: Array.from({ length: count }, (_, index) =>
+          new Color(sourceColors?.[index % sourceColors.length] ?? zoneState?.color ?? '#071018')
+        )
+      };
+    });
+    const worldPosition = new Vector3();
+    const localPosition = new Vector3();
+    let found = false;
+
+    robot.updateMatrixWorld(true);
+    robot.traverse((object) => {
+      const mesh = object as Mesh;
+      if (!mesh.isMesh) return;
+      // Older hot-reloaded robot instances may still contain the source
+      // speaker bulb that used to be extracted and incorrectly treated as a
+      // segmented LED surface. Retire that legacy projection immediately;
+      // the authored body and the grille projection own the ear appearance.
+      if (mesh.name === 'viewer-led-diffuser-ears' || mesh.userData.viewerLedZone === 'ears') {
+        mesh.visible = false;
+        return;
+      }
+      const positions = mesh.geometry.getAttribute('position');
+      const colors = mesh.geometry.getAttribute('color');
+      if (!positions || !colors || colors.itemSize < 3) return;
+
+      let baseline = this.ledMeshBaseColors.get(mesh.geometry);
+      if (!baseline || baseline.length !== colors.array.length) {
+        baseline = new Float32Array(colors.array as ArrayLike<number>);
+        this.ledMeshBaseColors.set(mesh.geometry, baseline);
+      }
+
+      for (let index = 0; index < positions.count; index += 1) {
+        const offset = index * colors.itemSize;
+        colors.setXYZ(index, baseline[offset], baseline[offset + 1], baseline[offset + 2]);
+        if (!this.ledStateProjection.visible || earFrames.length === 0) continue;
+
+        worldPosition.fromBufferAttribute(positions, index).applyMatrix4(mesh.matrixWorld);
+        let frame = earFrames[0];
+        let distance = worldPosition.distanceToSquared(frame.ear.center);
+        for (let candidateIndex = 1; candidateIndex < earFrames.length; candidateIndex += 1) {
+          const candidate = earFrames[candidateIndex];
+          const candidateDistance = worldPosition.distanceToSquared(candidate.ear.center);
+          if (candidateDistance < distance) {
+            frame = candidate;
+            distance = candidateDistance;
+          }
+        }
+
+        localPosition.copy(worldPosition).sub(frame.ear.center).applyQuaternion(frame.inverseOrientation);
+        const radialDistance = Math.hypot(localPosition.x, localPosition.z);
+        // Persisted calibrations created before the authored diffuser mapping
+        // used a 16 mm marker radius. Never let that legacy presentation value
+        // select the 25 mm inner speaker bulb again: the light-emitting plastic
+        // is the outer annulus of the authored head shell.
+        const innerRadius = Math.max(0.028, frame.ear.radius * 1.06);
+        const outerRadius = Math.max(0.041, frame.ear.radius * 1.5);
+        const surfaceDepth = Math.max(0.004, frame.ear.radius * 0.48);
+        if (
+          radialDistance < innerRadius ||
+          radialDistance > outerRadius ||
+          Math.abs(localPosition.y) > surfaceDepth
+        ) {
+          continue;
+        }
+
+        found = true;
+        let angle = Math.atan2(localPosition.x, localPosition.z);
+        if (angle < 0) angle += Math.PI * 2;
+        const colorPosition = angle / (Math.PI * 2) * frame.colors.length;
+        const colorIndex = Math.floor(colorPosition) % frame.colors.length;
+        const nextColorIndex = (colorIndex + 1) % frame.colors.length;
+        const color = frame.colors[colorIndex].clone()
+          .lerp(frame.colors[nextColorIndex], colorPosition - Math.floor(colorPosition))
+          .multiplyScalar(intensity);
+        colors.setXYZ(index, color.r, color.g, color.b);
+      }
+      colors.needsUpdate = true;
+    });
+
+    return found;
   }
 
   private createEyeRingMireLines(eye: Viewer3DLedRingPose): [Line, Line, Line] {
