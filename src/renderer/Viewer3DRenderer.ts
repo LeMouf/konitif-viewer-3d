@@ -629,6 +629,17 @@ export type Viewer3DLedRingZoneId = 'eyes' | 'headTop' | 'ears' | 'hands' | 'fee
 
 export type Viewer3DLedRingCalibration = ViewerLedRingCalibration;
 
+export interface Viewer3DLedZoneStateProjection {
+  color?: string;
+  colors?: readonly string[];
+  intensity?: number;
+}
+
+export interface Viewer3DLedStateProjection {
+  visible: boolean;
+  zones: Partial<Record<Viewer3DLedRingZoneId, Viewer3DLedZoneStateProjection>>;
+}
+
 export interface Viewer3DEyeRingCalibration extends Viewer3DLedRingCalibration {
   zones?: Partial<Record<Viewer3DLedRingZoneId, Partial<Viewer3DLedRingCalibration>>>;
 }
@@ -1098,6 +1109,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private poseHandleTargetTransitionState: Viewer3DPoseHandleTargetTransitionState | null = null;
   private poseHandleDragStarted = false;
   private poseHandleControlsWereEnabled = false;
+  private ledStateProjection: Viewer3DLedStateProjection = { visible: false, zones: {} };
   private suppressPoseHandleClickUntil = 0;
   private poseEditBaseline: Record<string, number> | null = null;
   private dirtyPose = false;
@@ -2999,6 +3011,33 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.updateEyeRingDebug();
     }
 
+    this.requestRender();
+  }
+
+  setLedStateProjection(projection: Viewer3DLedStateProjection | null): void {
+    this.ledStateProjection = projection
+      ? {
+          visible: projection.visible === true,
+          zones: Object.fromEntries(
+            Object.entries(projection.zones).map(([zoneId, zone]) => [
+              zoneId,
+              zone
+                ? {
+                    color: typeof zone.color === 'string' ? zone.color : undefined,
+                    colors: Array.isArray(zone.colors) ? [...zone.colors] : undefined,
+                    intensity: Number.isFinite(zone.intensity) ? Math.max(0, Math.min(1, zone.intensity ?? 1)) : 1
+                  }
+                : undefined
+            ])
+          ) as Viewer3DLedStateProjection['zones']
+        }
+      : { visible: false, zones: {} };
+
+    if (this.ledStateProjection.visible || this.options.showEyeRingDebug || this.options.showEyeRingMire) {
+      this.updateEyeRingDebug();
+    } else {
+      this.updateEyeRingDebugVisibility();
+    }
     this.requestRender();
   }
 
@@ -12354,7 +12393,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     this.eyeRingDebugGroup.visible =
       subjectVisible &&
-      (this.options.showEyeRingDebug || this.options.showEyeRingMire) &&
+      (this.options.showEyeRingDebug || this.options.showEyeRingMire || this.ledStateProjection.visible) &&
       this.eyeRingDebugGroup.children.length > 0;
   }
 
@@ -12373,7 +12412,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
   private updateEyeRingDebug(): void {
     const robot = this.getPoseControlRobot();
-    if ((!this.options.showEyeRingDebug && !this.options.showEyeRingMire) || !robot) {
+    if ((!this.options.showEyeRingDebug && !this.options.showEyeRingMire && !this.ledStateProjection.visible) || !robot) {
       this.updateEyeRingDebugVisibility();
       return;
     }
@@ -12390,14 +12429,14 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     const group = this.ensureEyeRingDebugGroup();
     this.clearEyeRingDebug();
 
-    if (this.options.showEyeRingDebug) {
+    if (this.options.showEyeRingDebug || this.ledStateProjection.visible) {
       for (const ring of ledRingPoses) {
         const ledCount = Math.max(
           ring.calibration.layout === 'strip' ? 1 : 3,
           Math.min(64, Math.round(ring.calibration.ledCount))
         );
 
-        if (ring.calibration.mireVisible) {
+        if (this.options.showEyeRingDebug && ring.calibration.mireVisible) {
           for (const [index, dimension] of this.resolveEyeRingDebugDimensions(ring.calibration).entries()) {
             group.add(
               this.createLedLayoutGuide(
@@ -12830,14 +12869,17 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     count: number,
     ledSize: number
   ): Mesh {
-    const color = index % 2 === 0 ? '#22c55e' : '#86efac';
+    const zoneState = this.ledStateProjection.visible ? this.ledStateProjection.zones[eye.zoneId] : undefined;
+    const projectedColor = zoneState?.colors?.[index % Math.max(1, zoneState.colors.length)] ?? zoneState?.color;
+    const color = projectedColor ?? (this.ledStateProjection.visible ? '#111827' : index % 2 === 0 ? '#22c55e' : '#86efac');
+    const intensity = zoneState?.intensity ?? (this.ledStateProjection.visible ? 0.3 : 0.92);
     const markerSize = Math.max(0.001, Math.min(0.02, ledSize));
     const marker = new Mesh(
       new SphereGeometry(markerSize, 12, 8),
       new MeshBasicMaterial({
         color,
         transparent: true,
-        opacity: 0.92,
+        opacity: intensity,
         depthTest: false,
         depthWrite: false
       })
