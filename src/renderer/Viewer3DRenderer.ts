@@ -100,6 +100,7 @@ import { VerticalTiltShiftShader } from 'three/examples/jsm/shaders/VerticalTilt
 import {
   getRobotMotionAnimationDuration,
   interpolateRobotMotionTrackValueAtTime,
+  sampleRobotMotionJointValuesAtTime,
   toRobotMotionJointValue,
   resolveRobotMotionPlaybackDuration,
   type RobotMotionAnimation,
@@ -1026,6 +1027,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private projectilePointerInside = false;
   private trajectoryAnimation: RobotMotionAnimation | null = null;
   private trajectorySignature = '';
+  private trajectoryProjectionRevision = 0;
   private trajectoryAnchors = new Map<string, Vector3 | null>();
   private themeObserver: MutationObserver | null = null;
   private animationLoop!: AnimationLoop;
@@ -2043,6 +2045,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     if (this.options.physicsEnabled) {
       this.physicsVisualRootToRobotMatrix = null;
+      this.invalidateTrajectoryPreviewProjection();
       if (!this.syncPhysicsKinematicPoseFromRobotPose({ holdFrames: PHYSICS_RESET_KINEMATIC_HOLD_FRAMES })) {
         this.syncPhysicsJointTargetsFromRobotPose();
       }
@@ -2070,6 +2073,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     this.options.physicsMotorsCoupled = physicsMotorsCoupled;
     this.physicsVisualRootToRobotMatrix = null;
+    this.invalidateTrajectoryPreviewProjection();
     this.resetPhysicsPostureCompensation();
 
     if (!physicsMotorsCoupled) {
@@ -2112,6 +2116,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       resolvePhysicsSourceString(source.metadata?.visualRootBodyName);
     this.physicsVisualBodyObjectNames = visualBodyObjectNames;
     this.physicsVisualRootToRobotMatrix = null;
+    this.invalidateTrajectoryPreviewProjection();
     this.physicsResetPose = null;
     this.physicsResetRobotTransform = null;
     this.physicsResetBaselineCaptureFrames = 0;
@@ -2147,6 +2152,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.scrubPreviewState = null;
     this.playbackSyncSignature = '';
     this.physicsVisualRootToRobotMatrix = null;
+    this.invalidateTrajectoryPreviewProjection();
     this.physicsAuthoredJointTargets.clear();
     this.resetPhysicsPostureCompensation();
     this.comparisonViewerSample = null;
@@ -2157,6 +2163,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.lastPhysicsStepAt = 0;
     this.resetTemporalProjection();
     this.physicsVisualRootToRobotMatrix = null;
+    this.invalidateTrajectoryPreviewProjection();
 
     if (this.options.physicsMotorsCoupled) {
       if (!this.syncPhysicsKinematicPoseFromRobotPose({ holdFrames: PHYSICS_RESET_KINEMATIC_HOLD_FRAMES })) {
@@ -3063,7 +3070,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
   setTrajectoryPreview(animation: RobotMotionAnimation | null): void {
     if (this.trajectoryAnimation === animation) {
-      this.updateTrajectoryGroupVisibility();
+      if (this.options.showTrajectories) {
+        this.rebuildTrajectoryPreview();
+      } else {
+        this.updateTrajectoryGroupVisibility();
+      }
       return;
     }
 
@@ -3089,6 +3100,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.captureMaterialBaselines(robot, this.robotMaterialBaselines);
     this.resetTemporalProjection();
     this.physicsVisualRootToRobotMatrix = null;
+    this.invalidateTrajectoryPreviewProjection();
     this.physicsProjectionMinimumStateRevision = null;
     this.physicsResetPose = null;
     this.physicsResetRobotTransform = null;
@@ -3481,6 +3493,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.playbackState.animation === animation &&
       this.playbackSyncSignature === syncSignature
     ) {
+      if (this.options.showTrajectories && animation) {
+        this.rebuildTrajectoryPreview();
+      }
       return;
     }
 
@@ -3542,6 +3557,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           this.alignUnbufferedPlaybackPoseToSupportFloor();
         }
       }
+      this.rebuildTrajectoryPreview();
       this.updateTrajectoryCurrentMarkers();
       if (nextPlaybackState.clockMode === 'realtime') {
         this.scheduleLoop();
@@ -3578,6 +3594,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           this.alignUnbufferedPlaybackPoseToSupportFloor();
         }
       }
+      this.rebuildTrajectoryPreview();
       this.updateTrajectoryCurrentMarkers();
       if (
         shouldStartViewerPlaybackCompletionTransition({
@@ -5513,7 +5530,6 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
         if (this.lastFrameAt > 0) {
           const frameMs = now - this.lastFrameAt;
           this.averageFrameMs = this.averageFrameMs * 0.9 + frameMs * 0.1;
-          this.tunePixelRatio(this.averageFrameMs);
         }
 
         this.lastFrameAt = now;
@@ -5523,6 +5539,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           this.averageRenderMs,
           performance.now() - renderStartedAt
         );
+        this.tunePixelRatio(this.averageRenderMs);
         this.lastRenderCalls = this.renderer.info.render.calls;
         this.lastRenderTriangles = this.renderer.info.render.triangles;
         this.renderFramesSinceReport += 1;
@@ -5582,6 +5599,18 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     if (this.observedRobotGhostMirrorsSimulatedRobot) {
       this.syncObservedRobotGhostFromSimulatedRobot();
     }
+    if (
+      this.options.showTrajectories &&
+      this.trajectoryAnimation?.motion.hasMotion &&
+      this.trajectorySignature === ''
+    ) {
+      this.rebuildTrajectoryPreview();
+    }
+    // Every pose authority (authored playback, runtime-history replay and
+    // physics projection) converges here. Refreshing the markers immediately
+    // before drawing prevents a solver step or a root presentation offset
+    // from leaving them one frame behind the rendered robot.
+    this.updateTrajectoryCurrentMarkers();
     this.updatePoseHandleScreenScale();
     this.updateProjectileCameraProjection();
     const ground = this.visualGroundLayer;
@@ -8175,6 +8204,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
         physicsRootWorldMatrix,
         bodyTransforms
       );
+      this.invalidateTrajectoryPreviewProjection();
     }
 
     const nextRobotWorldMatrix = physicsRootWorldMatrix.clone().multiply(this.physicsVisualRootToRobotMatrix);
@@ -11274,6 +11304,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.createPhysicsBodyViewerWorldMatrix(rootTransform),
       bodyTransforms
     );
+    this.invalidateTrajectoryPreviewProjection();
   }
 
   private projectProjectilePhysicsObservation(): void {
@@ -13799,6 +13830,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     return marker;
   }
 
+  private invalidateTrajectoryPreviewProjection(): void {
+    this.trajectoryProjectionRevision += 1;
+    this.trajectorySignature = '';
+  }
+
   private ensureTrajectoryGroup(): Group {
     if (this.trajectoryGroup) {
       return this.trajectoryGroup;
@@ -13807,7 +13843,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.trajectoryGroup = new Group();
     this.trajectoryGroup.name = 'AnimationTrajectoryPreview';
     this.trajectoryGroup.visible = false;
-    this.scene.add(this.trajectoryGroup);
+    this.simulatedRobotPresentationRoot.add(this.trajectoryGroup);
     return this.trajectoryGroup;
   }
 
@@ -13871,6 +13907,12 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.trajectorySignature = nextSignature;
 
     const originalPose = this.captureJointPose();
+    const originalRobotTransform = this.captureRobotTransform(this.robot);
+    const temporalSampleResolver =
+      this.playbackState?.animation === animation
+        ? this.playbackState.resolveTemporalProjectionSample
+        : null;
+    let temporalRootAlignment = this.physicsVisualRootToRobotMatrix?.clone() ?? null;
     const previousAnimatedTargets = new Set(this.lastAnimatedJointTargets);
     const sampleCount = Math.max(
       ROBOT_VIEWER_TRAJECTORY_MIN_SAMPLES,
@@ -13880,15 +13922,26 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     for (let sampleIndex = 0; sampleIndex <= sampleCount; sampleIndex += 1) {
       const sampleTime = (sampleIndex / sampleCount) * duration;
-      this.applyRobotPose(animation, sampleTime, [], duration);
+      const temporalSample = temporalSampleResolver?.(sampleTime) ?? null;
+      this.restoreRobotTransform(this.robot, originalRobotTransform);
+
+      if (temporalSample?.viewer) {
+        temporalRootAlignment = this.applyTrajectoryTemporalSamplePose(
+          temporalSample,
+          temporalRootAlignment
+        );
+      } else {
+        this.applyTrajectorySamplePose(animation, sampleTime, duration);
+      }
       this.robot.updateMatrixWorld(true);
 
       for (const target of targets) {
-        pointsByTarget.get(target.id)?.push(this.getTrajectoryPoint(target.id));
+        pointsByTarget.get(target.id)?.push(this.getTrajectoryPointInProjectionFrame(target.id));
       }
     }
 
-    this.restoreJointPose(originalPose);
+    this.restoreRobotTransform(this.robot, originalRobotTransform);
+    this.restoreTrajectorySamplePose(originalPose);
     this.lastAnimatedJointTargets = previousAnimatedTargets;
     this.nextAnimatedJointTargets.clear();
 
@@ -13902,9 +13955,82 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       trajectoryGroup.add(this.createTrajectoryObject(target, points));
     }
 
-    this.updateTrajectoryCurrentMarkers();
     this.updateTrajectoryGroupVisibility();
+    this.updateTrajectoryCurrentMarkers();
     this.requestRender();
+  }
+
+  private applyTrajectorySamplePose(
+    animation: RobotMotionAnimation,
+    time: number,
+    duration: number
+  ): void {
+    const joints = this.getRobotJoints();
+
+    for (const { target, value } of sampleRobotMotionJointValuesAtTime(animation, time, duration)) {
+      const joint = joints[target];
+      if (joint) this.applyDesiredProjectionJointValue(joint, value);
+    }
+  }
+
+  private applyTrajectoryTemporalSamplePose(
+    sample: ViewerHistorySample<ViewerMetadata>,
+    rootAlignment: Matrix4 | null
+  ): Matrix4 | null {
+    const viewer = sample.viewer;
+    const robot = this.robot;
+
+    if (!viewer || !robot) {
+      return rootAlignment;
+    }
+
+    const joints = this.getRobotJoints();
+    for (const [target, value] of Object.entries(viewer.joints ?? {})) {
+      const joint = joints[target];
+      if (joint && Number.isFinite(value)) {
+        this.applyDesiredProjectionJointValue(joint, value);
+      }
+    }
+
+    const bodyTransforms = (viewer.physics?.bodyTransforms ?? []).map((transform) =>
+      this.deserializeRuntimeHistoryTransform(transform, false)
+    );
+    const rootTransform =
+      bodyTransforms.find((transform) => transform.metadata?.visualRoot === true) ??
+      bodyTransforms.find((transform) => transform.bodyName === this.physicsVisualRootBodyName);
+    let nextRootAlignment = rootAlignment;
+
+    if (rootTransform) {
+      const physicsRootWorldMatrix = this.createPhysicsBodyViewerWorldMatrix(rootTransform);
+      nextRootAlignment ??= this.resolvePhysicsVisualRootToRobotMatrix(
+        physicsRootWorldMatrix,
+        bodyTransforms
+      );
+      const nextRobotLocalMatrix = physicsRootWorldMatrix.clone().multiply(nextRootAlignment);
+      const parent = robot.parent;
+
+      if (parent && parent !== this.simulatedRobotPresentationRoot) {
+        parent.updateMatrixWorld(true);
+        nextRobotLocalMatrix.premultiply(parent.matrixWorld.clone().invert());
+      }
+
+      robot.matrix.copy(nextRobotLocalMatrix);
+      robot.matrix.decompose(robot.position, robot.quaternion, robot.scale);
+    }
+
+    robot.updateMatrixWorld(true);
+    return nextRootAlignment;
+  }
+
+  private restoreTrajectorySamplePose(pose: Readonly<Record<string, number>>): void {
+    const joints = this.getRobotJoints();
+
+    for (const [target, value] of Object.entries(pose)) {
+      const joint = joints[target];
+      if (joint) this.applyDesiredProjectionJointValue(joint, value);
+    }
+
+    this.robot?.updateMatrixWorld(true);
   }
 
   private getTrajectorySignature(
@@ -13914,17 +14040,52 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   ): string {
     return JSON.stringify({
       duration: Number(duration.toFixed(3)),
+      projectionRevision: this.trajectoryProjectionRevision,
+      playbackProjection: this.getTrajectoryPlaybackProjectionSignature(animation),
       handsOnly: this.options.showHandTrajectoriesOnly,
       targets: targets.map((target) => target.id),
+      temporalProjection: this.getTrajectoryTemporalProjectionSignature(animation, duration),
       tracks: animation.motion.tracks.map((track) => ({
         target: track.target,
         property: track.property,
-        keys: track.keys.length,
-        firstTime: track.keys[0]?.time ?? null,
-        lastTime: track.keys[track.keys.length - 1]?.time ?? null,
-        firstValue: track.keys[0]?.value ?? null,
-        lastValue: track.keys[track.keys.length - 1]?.value ?? null
+        interpolation: track.interpolation ?? null,
+        unitKind: track.unitKind ?? null,
+        keys: track.keys.map((key) => [key.time, key.value])
       }))
+    });
+  }
+
+  private getTrajectoryPlaybackProjectionSignature(animation: RobotMotionAnimation): unknown {
+    const playback = this.playbackState;
+
+    if (playback?.animation !== animation) {
+      return null;
+    }
+
+    return {
+      mutedTargets: [...playback.mutedTrackTargetSet].sort(),
+      startTransitionMinimumDurationSeconds: playback.startTransitionMinimumDurationSeconds,
+      entryPose: this.createPoseSignature(playback.entryPose),
+      endTransitionMinimumDurationSeconds: playback.endTransitionMinimumDurationSeconds,
+      exitPose: this.createPoseSignature(playback.exitPose)
+    };
+  }
+
+  private getTrajectoryTemporalProjectionSignature(
+    animation: RobotMotionAnimation,
+    duration: number
+  ): Array<[number, number] | null> | null {
+    const playback = this.playbackState;
+    const resolver =
+      playback?.animation === animation ? playback.resolveTemporalProjectionSample : null;
+
+    if (!resolver) {
+      return null;
+    }
+
+    return [0, duration * 0.5, duration].map((time) => {
+      const sample = resolver(time);
+      return sample ? [sample.id, Number(sample.timeSeconds.toFixed(4))] : null;
     });
   }
 
@@ -14058,8 +14219,15 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
         continue;
       }
 
-      currentMarker.position.copy(this.getTrajectoryPoint(target));
+      currentMarker.position.copy(this.getTrajectoryPointInProjectionFrame(target));
     }
+  }
+
+  private getTrajectoryPointInProjectionFrame(target: string): Vector3 {
+    return projectViewerTrajectoryPointToFrame(
+      this.getTrajectoryPoint(target),
+      this.simulatedRobotPresentationRoot
+    );
   }
 
   private getTrajectoryPoint(target: string): Vector3 {
@@ -14167,11 +14335,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       return anchor;
     }
 
+    joint.updateMatrixWorld?.(true);
     const jointInverse = joint.matrixWorld.clone().invert();
     const localBounds = new Box3();
     let hasBounds = false;
 
-    joint.updateMatrixWorld?.(true);
     joint.traverse((node) => {
       if (node !== joint && (node as { isURDFJoint?: boolean }).isURDFJoint) {
         return;
@@ -14597,6 +14765,15 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
 function formatNavigationDistance(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}m`;
+}
+
+/** Projects a world-space trajectory sample into the robot presentation frame. */
+export function projectViewerTrajectoryPointToFrame(
+  point: Readonly<{ x: number; y: number; z: number }>,
+  frame: Object3D
+): Vector3 {
+  frame.updateWorldMatrix(true, false);
+  return frame.worldToLocal(new Vector3(point.x, point.y, point.z));
 }
 
 function formatNavigationAngle(value: number): string {
