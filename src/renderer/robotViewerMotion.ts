@@ -45,6 +45,11 @@ export type RobotMotionAnimation = {
   };
 };
 
+export type RobotMotionJointSample = {
+  target: string;
+  value: number;
+};
+
 type RenderableRobotMotionTrackKey = {
   sourceIndex: number;
   time: number;
@@ -130,6 +135,30 @@ export function resolveRobotMotionPlaybackDuration(
 export function interpolateRobotMotionTrackValueAtTime(track: RobotMotionTrack, time: number): number | null {
   const value = interpolateRawRobotMotionTrackValueAtTime(track, time);
   return value === null ? null : toRobotMotionJointValue(track, value);
+}
+
+/**
+ * Evaluates authored joint values for a spatial preview without applying any
+ * runtime or physics side effect. The renderer remains responsible for
+ * projecting these samples onto its temporary visual incarnation.
+ */
+export function sampleRobotMotionJointValuesAtTime(
+  animation: RobotMotionAnimation,
+  time: number,
+  durationOverride: number | null = null
+): RobotMotionJointSample[] {
+  const duration = durationOverride ?? getRobotMotionAnimationDuration(animation);
+  const clampedTime = Math.max(0, Math.min(time, duration));
+  const samples: RobotMotionJointSample[] = [];
+
+  for (const track of animation.motion.tracks) {
+    if (!track.target) continue;
+    const value = interpolateRobotMotionTrackValueAtTime(track, clampedTime);
+    if (value === null || Number.isNaN(value)) continue;
+    samples.push({ target: track.target, value });
+  }
+
+  return samples;
 }
 
 /** Viewer joints consume radians; authored keys remain in their declared units.
