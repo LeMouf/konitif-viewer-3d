@@ -44,6 +44,13 @@ const scene = createViewer3DSceneSnapshot({
 Import `@konitif/viewer-3d/renderer` only when a Three.js renderer and its
 explicit providers are required.
 
+The renderer's `setIncarnationMaterialProjection(target, projection)` tunes
+standard/physical materials independently for `simulated` or `observed` visual
+incarnations. Scales are applied from the captured material baseline, so repeated
+updates do not accumulate. The observed clone never changes the source mesh.
+Color/opacity remain owned by comparison appearance. These are visual settings,
+not robot commands, measured material properties or evidence of emitted light.
+
 ## Public entry points
 
 | Entry | Purpose |
@@ -64,6 +71,39 @@ import { resolveViewerOrientationGizmoTransform } from '@konitif/viewer-3d/orien
 
 const transform = resolveViewerOrientationGizmoTransform({ x: 0, y: 0, z: 0, w: 1 });
 ```
+
+## Observed pose playback
+
+The observed robot's interpolated presentation uses a bounded buffer with a
+450 ms visual delay. It interpolates only between admitted poses;
+it never changes telemetry, predicts a future motion or drives the robot.
+On buffer underrun it holds the last known pose rather than inventing motion.
+Hosts may explicitly declare `sourceClock: 'monotonic'` when admitting a pose.
+The buffer then preserves source intervals through receipt bursts, mapping
+elapsed source time to the first receipt without comparing clock epochs.
+Without that guarantee it uses receipt intervals. Session changes, invalid
+samples and timeline gaps over 500 ms reset its history.
+The raw presentation mode remains immediate. This delay does not apply to LED
+observations or other sensor readings.
+
+Hosts may author independent `supportDefinition.soleStabilizationChains` and
+set `setObservedRobotSoleStabilizationStrength(0..1)` (default: disabled).
+This is an inferred geometric presentation constraint, not measured contact
+or simulated friction. It corrects only rendered articulated joints, within
+authored limits and 0.04 radians of each admitted pose. A lifted sole or more
+than 12 mm horizontal drift releases its anchor; session changes, disabling,
+raw playback and timeline gaps discard anchors. Source observations and
+hardware commands are never modified.
+Eligible soles are constrained to a common lowest visible surface before root
+grounding. Cached convex vertices give exact directional support of rigid
+foot meshes, rather than the empty corners of a rotated bounding box.
+Lifted or released feet are not pulled back into the contact plane.
+
+Buffered poses use shape-preserving Hermite interpolation between already
+admitted neighbors, with continuous velocity at interior sample boundaries.
+The curve stays inside each segment's angular endpoints and stops at missing
+data; its provenance includes the neighboring observations used for tangents.
+This does not add visual delay or extrapolate a future pose.
 
 ## Reference
 

@@ -1,5 +1,6 @@
 /** Explicit-provider renderer entry. Deliberately excludes historical defaults and campaigns. */
 export * from './Viewer3DRenderer.js';
+export * from './IncarnationMaterialProjection.js';
 export * from './displayFrameRate.js';
 export {
   resolveViewerFrameSignalIntervalMs,

@@ -31,6 +31,7 @@ import type {
 import { copyViewerMetadata, type ViewerMetadata } from './ViewerMetadata.js';
 import type { ViewerHistoryPort, ViewerHistoryObservation } from './ViewerHistoryPort.js';
 import type { ViewerHistorySample, ViewerHistoryTransform, ViewerHistoryVector3 } from './ViewerHistoryData.js';
+import { IncarnationMaterialProjector, normalizeIncarnationMaterialProjection, type Viewer3DIncarnationMaterialProjection } from './IncarnationMaterialProjection.js';
 
 export type ViewerRuntimeHistoryPort = ViewerHistoryPort<
   Omit<ViewerHistorySample<ViewerMetadata>, 'id' | 'recordedAt'> & { recordedAt?: number },
@@ -159,6 +160,8 @@ import {
   ObservedRobotPresentationBuffer,
   type ObservedRobotPresentationStatus
 } from './ObservedRobotPresentationBuffer.js';
+import { ObservedSoleAnchors, projectBoundedSoleCorrection } from './ObservedSoleStabilization.js';
+import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js';
 import {
   resolveViewerFrameSignalIntervalMs,
   VIEWER_FRAME_SIGNAL_CATALOG,
@@ -942,6 +945,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private poseControlTarget: Viewer3DPoseControlTarget = 'simulated';
   private observedPoseLiveControlEnabled = false;
   private readonly robotMaterialBaselines = new Map<Material, Viewer3DMaterialBaseline>();
+  private readonly incarnationMaterialProjector = new IncarnationMaterialProjector();
+  private readonly incarnationMaterialProjections: Partial<Record<'simulated' | 'observed', Viewer3DIncarnationMaterialProjection>> = {};
   private readonly observedRobotGhostMaterialBaselines = new Map<Material, Viewer3DMaterialBaseline>();
   private readonly observedRobotGhostRenderOrderBaselines = new Map<Mesh, number>();
   private readonly observedRobotGhostShadowMaterials = new Map<Mesh, MeshDepthMaterial>();
@@ -952,6 +957,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private readonly observedRobotGhostBaseQuaternion = new Quaternion();
   private readonly observedRobotGhostBaseScale = new Vector3(1, 1, 1);
   private observedRobotTemporalSupportAnchorState: ObservedRobotTemporalSupportAnchorState | null = null;
+  private observedSoleAnchors = new ObservedSoleAnchors();
+  private observedSoleConnectionId = '';
+  private observedSoleStrength = 0;
+  private observedSoleBaseline = new Map<RobotJointLike, number>();
+  private observedSoleSurfaceVertices = new WeakMap<BufferGeometry, { attribute: unknown; version: number; points: readonly Vector3[] }>();
   private observedRobotGrounding: ObservedRobotGroundingProjection = resolveObservedRobotGroundingProjection({
     enabled: false,
     floorY: ROBOT_VIEWER_SUPPORT_FLOOR_Y,
@@ -1895,6 +1905,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     frameId: string;
     connectionId: string;
     observedAtSeconds: number | null;
+    sourceClock?: 'monotonic';
     jointValues: Readonly<Record<string, number>>;
     receivedAtMs?: number;
   }): boolean {
@@ -1903,10 +1914,16 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       sampleId: input.frameId,
       connectionId: input.connectionId,
       sourceObservedAtSeconds: input.observedAtSeconds,
+      sourceClock: input.sourceClock,
       receivedAtMs,
       jointValues: input.jointValues
     });
     if (!accepted) return false;
+    if (this.observedSoleConnectionId !== input.connectionId) {
+      this.restoreObservedSoleBaseline();
+      this.observedSoleAnchors.reset();
+      this.observedSoleConnectionId = input.connectionId;
+    }
 
     const frame = this.observedRobotPresentation.project(receivedAtMs);
     if (frame) this.applyObservedRobotGhostJointValues(frame.jointValues);
@@ -1915,7 +1932,26 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   resetObservedRobotGhostJointObservation(): void {
+    this.restoreObservedSoleBaseline();
+    this.observedSoleAnchors.reset();
     this.observedRobotPresentation.reset('discontinuity');
+  }
+
+  setObservedRobotSoleStabilizationStrength(value: number): void {
+    this.observedSoleAnchors ??= new ObservedSoleAnchors();
+    const strength = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+    if (strength === this.observedSoleStrength) return;
+    this.restoreObservedSoleBaseline();
+    this.observedSoleAnchors.reset();
+    this.observedSoleStrength = strength;
+    this.applyObservedRobotGhostGrounding();
+    this.requestRender();
+  }
+
+  private restoreObservedSoleBaseline(): void {
+    this.observedSoleBaseline ??= new Map();
+    for (const [joint, value] of this.observedSoleBaseline) joint.setJointValue(value);
+    this.observedSoleBaseline.clear();
   }
 
   getObservedRobotPresentationStatus(): ObservedRobotPresentationStatus {
@@ -1924,6 +1960,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
   private applyObservedRobotGhostJointValues(values: Readonly<Record<string, number | null>>): boolean {
     if (!this.observedRobotGhost) return false;
+    const hadSoleCorrection = (this.observedSoleBaseline?.size ?? 0) > 0;
+    this.restoreObservedSoleBaseline();
 
     const joints = (this.observedRobotGhost as { joints?: Record<string, RobotJointLike> }).joints ?? {};
     let changed = false;
@@ -1936,7 +1974,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       changed = joint.setJointValue(value) !== false || changed;
     }
 
-    if (changed) {
+    if (changed || hadSoleCorrection) {
       this.applyObservedRobotGhostGrounding();
       if (this.poseControlTarget === 'observed') {
         this.refreshPoseHandleProjection();
@@ -2008,9 +2046,27 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     // invalidate that anchor.
     if (spatialLayoutChanged) {
       this.observedRobotTemporalSupportAnchorState = null;
+      this.observedSoleAnchors?.reset();
     }
     this.applyRobotComparisonAppearance();
     this.requestRender();
+  }
+
+  /** Tune one visual incarnation independently; source meshes and telemetry remain unchanged. */
+  setIncarnationMaterialProjection(target: 'simulated' | 'observed', projection: Viewer3DIncarnationMaterialProjection): void {
+    if (target !== 'simulated' && target !== 'observed') throw new Error('Invalid material incarnation target');
+    this.incarnationMaterialProjections[target] = normalizeIncarnationMaterialProjection(projection);
+    this.applyIncarnationMaterialProjections();
+    this.requestRender();
+  }
+
+  private applyIncarnationMaterialProjections(): void {
+    for (const target of ['simulated', 'observed'] as const) {
+      const projection = this.incarnationMaterialProjections[target];
+      if (!projection) continue;
+      const materials = target === 'simulated' ? this.robotMaterialBaselines : this.observedRobotGhostMaterialBaselines;
+      this.incarnationMaterialProjector.apply(materials.keys(), projection);
+    }
   }
 
   async setPhysicsEngine(
@@ -7009,6 +7065,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
       const ghostMaterials = sourceMaterials.map((source) => {
         const material = source.clone();
+        // Three material cloning does not retain consumer-owned shader hooks.
+        // Preserve the observed model's own hooks, never the simulated state.
+        material.onBeforeCompile = source.onBeforeCompile;
+        material.customProgramCacheKey = source.customProgramCacheKey;
         this.captureMaterialBaseline(material, this.observedRobotGhostMaterialBaselines);
         return material;
       });
@@ -7051,6 +7111,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private clearObservedRobotGhost(): void {
+    this.restoreObservedSoleBaseline();
+    this.observedSoleAnchors?.reset();
     this.cancelRobotComparisonVisibilityTransition();
     this.observedRobotPresentation.reset('discontinuity');
     this.simulatedRobotPresentationRoot.position.x = 0;
@@ -7093,6 +7155,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private applyRobotComparisonAppearance(): void {
+    this.applyIncarnationMaterialProjections();
     this.applyMaterialAppearance(this.robotMaterialBaselines, this.robotComparisonAppearance.simulated);
     this.applyMaterialAppearance(
       this.observedRobotGhostMaterialBaselines,
@@ -7137,6 +7200,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private applyObservedRobotGhostGrounding(): void {
+    this.restoreObservedSoleBaseline();
     if (this.comparisonProfileId) {
       this.projectComparisonSimulation();
       return;
@@ -7167,6 +7231,12 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     const supportContacts = this.resolveObservedRobotSupportContacts(robot);
     const supportPoints = supportContacts.supportPoints;
+    const lowestRawSupport = Math.min(...supportPoints.map(point => point.y));
+    const soleEligible = new Map<string, boolean>();
+    for (const group of new Set(supportContacts.supportGroupIds)) {
+      const minimum = Math.min(...supportPoints.filter((_, index) => supportContacts.supportGroupIds[index] === group).map(point => point.y));
+      soleEligible.set(group, minimum - lowestRawSupport <= 0.008);
+    }
     const activeSupport = resolveObservedRobotActiveSupportProjection({
       supportPoints,
       contactIds: supportContacts.contactIds,
@@ -7226,18 +7296,123 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     robot.position.z += temporalSupportAnchor.offsetZ;
     robot.updateMatrixWorld(true);
 
+    const stabilizedSurfaceMinimumY = this.applyObservedSoleStabilization(robot, soleEligible, footSupportEligibility.eligible);
+
     const observedSupport = this.resolveObservedRobotSupport(robot, activeSupport.activeContactCount);
 
     this.observedRobotGrounding = resolveObservedRobotGroundingProjection({
       enabled: this.options.groundObservedRobotGhost,
       floorY: ROBOT_VIEWER_SUPPORT_FLOOR_Y,
-      supportMinimumY: observedSupport.supportMinimumY,
+      supportMinimumY: stabilizedSurfaceMinimumY ?? observedSupport.supportMinimumY,
       supportContactCount: observedSupport.supportContactCount,
-      source: observedSupport.source
+      source: stabilizedSurfaceMinimumY === null || stabilizedSurfaceMinimumY === undefined ? observedSupport.source : 'foot-geometry'
     });
     robot.position.y += this.observedRobotGrounding.offsetY;
     robot.updateMatrixWorld(true);
     this.applyNavigationPreviewPresentationTransform();
+  }
+
+  private applyObservedSoleStabilization(robot: Object3D, eligible: Map<string, boolean>, supportEligible: boolean): number | null {
+    if (!(this.observedSoleStrength > 0) || !supportEligible) return null;
+    const status = this.observedRobotPresentation?.getStatus();
+    if (status?.mode === 'raw' || status?.fallbackReason === 'sample_gap') {
+      this.observedSoleAnchors.reset();
+      return null;
+    }
+    const chains = this.options.supportDefinition?.soleStabilizationChains ?? [];
+    const joints = (robot as { joints?: Record<string, RobotJointLike> }).joints ?? {};
+    const pose = (groupId: string, foot: Object3D) => {
+      const contacts = this.resolveObservedRobotSupportContacts(robot);
+      const points = contacts.supportPoints.filter((_, index) => contacts.supportGroupIds[index] === groupId);
+      const center = points.reduce((sum, point) => sum.add(point), new Vector3()).multiplyScalar(1 / Math.max(1, points.length));
+      const rotation = foot.getWorldQuaternion(new Quaternion());
+      const supportMinimumY = this.resolvePreciseObservedSoleMinimumY(foot) ?? Math.min(...points.map(point => point.y));
+      return { position: [center.x, center.y, center.z] as [number, number, number], orientation: [rotation.x, rotation.y, rotation.z, rotation.w] as [number, number, number, number], supportMinimumY };
+    };
+    const candidates = chains.flatMap(chain => {
+      const selected = chain.jointNames.map(name => joints[name]);
+      const foot = selected[selected.length - 1] as unknown as Object3D | undefined;
+      if (!foot || typeof foot.getWorldQuaternion !== 'function' || selected.some(joint => !joint || joint.mimicJoint)) return [];
+      const baseline = selected.map(joint => this.readJointValue(joint!));
+      if (baseline.some(value => typeof value !== 'number' || !Number.isFinite(value))) return [];
+      return [{ chain, selected: selected as RobotJointLike[], foot, baseline: baseline as number[], raw: pose(chain.groupId, foot) }];
+    });
+    const targets = this.observedSoleAnchors.resolve(this.observedSoleConnectionId, candidates.map(candidate => ({
+      id: candidate.chain.groupId, position: candidate.raw.position,
+      eligible: this.options.groundObservedRobotGhost && supportEligible && eligible.get(candidate.chain.groupId) === true
+    })), this.observedSoleStrength);
+    // Both eligible soles share a surface before the final root grounding.
+    // Preserve lifted/released feet rather than treating every chain as contact.
+    const supportPlaneY = Math.min(...candidates.filter(candidate => targets.some(target => target.id === candidate.chain.groupId)).map(candidate => candidate.raw.supportMinimumY));
+    for (const target of targets) {
+      const candidate = candidates.find(entry => entry.chain.groupId === target.id)!;
+      const verticalOffset = supportPlaneY - candidate.raw.supportMinimumY;
+      const targetPosition: [number, number, number] = [target.target[0], candidate.raw.position[1] + verticalOffset, target.target[2]];
+      if (Math.hypot(...targetPosition.map((value, index) => value - candidate.raw.position[index]!)) < 0.00001) continue;
+      const apply = (values: readonly number[]) => {
+        candidate.selected.forEach((joint, index) => joint.setJointValue(values[index]!));
+        robot.updateMatrixWorld(true);
+      };
+      try {
+        const correction = projectBoundedSoleCorrection({
+          values: candidate.baseline,
+          limits: candidate.selected.map(joint => [joint.limit?.lower ?? -Math.PI, joint.limit?.upper ?? Math.PI] as const),
+          targetPosition, targetOrientation: candidate.raw.orientation,
+          targetSupportMinimumY: supportPlaneY,
+          evaluate: values => { apply(values); return pose(target.id, candidate.foot); }
+        });
+        apply(correction.values);
+        candidate.selected.forEach((joint, index) => this.observedSoleBaseline.set(joint, candidate.baseline[index]!));
+      } catch {
+        // Invalid/unreachable authored chains must leave the observed copy intact.
+        apply(candidate.baseline);
+      }
+    }
+    if (!targets.length) return null;
+    // An unanchored foot must still not be pushed through the floor by root grounding.
+    const visibleMinima = candidates.map(candidate => this.resolvePreciseObservedSoleMinimumY(candidate.foot))
+      .filter((value): value is number => value !== null);
+    const minimum = Math.min(...visibleMinima);
+    return Number.isFinite(minimum) ? minimum : null;
+  }
+
+  /** Exact directional support of rigid visible meshes, with cached convex vertices. */
+  private resolvePreciseObservedSoleMinimumY(foot: Object3D): number | null {
+    this.observedSoleSurfaceVertices ??= new WeakMap();
+    let minimum = Infinity;
+    foot.traverse(node => {
+      const mesh = node as Mesh & { isURDFCollider?: boolean };
+      if (!mesh.isMesh || mesh.isURDFCollider || !mesh.geometry) return;
+      const attribute = mesh.geometry.getAttribute('position');
+      if (!attribute) return;
+      const version = 'version' in attribute ? Number(attribute.version) : attribute.data.version;
+      let cached = this.observedSoleSurfaceVertices.get(mesh.geometry);
+      if (!cached || cached.attribute !== attribute || cached.version !== version) {
+        const points: Vector3[] = [];
+        for (let index = 0; index < attribute.count; index++) {
+          const point = new Vector3().fromBufferAttribute(attribute, index);
+          if ([point.x, point.y, point.z].every(Number.isFinite)) points.push(point);
+        }
+        let vertices: readonly Vector3[] = points;
+        if (points.length > 4) {
+          try {
+            const hull = new ConvexHull().setFromPoints(points);
+            const unique = new Set<Vector3>();
+            for (const face of hull.faces) {
+              let edge = face.edge;
+              do { unique.add(edge.vertex.point); edge = edge.next; } while (edge !== face.edge);
+            }
+            if (unique.size) vertices = [...unique];
+          } catch { /* Degenerate meshes retain their exact original vertices. */ }
+        }
+        cached = { attribute, version, points: vertices };
+        this.observedSoleSurfaceVertices.set(mesh.geometry, cached);
+      }
+      const matrix = mesh.matrixWorld.elements;
+      for (const point of cached.points) minimum = Math.min(minimum,
+        matrix[1]! * point.x + matrix[5]! * point.y + matrix[9]! * point.z + matrix[13]!);
+    });
+    return Number.isFinite(minimum) ? minimum : null;
   }
 
   private resolveObservedRobotSupportContacts(robot: Object3D): {

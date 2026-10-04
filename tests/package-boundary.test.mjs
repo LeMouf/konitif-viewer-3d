@@ -64,7 +64,9 @@ test('the package and lock bind the qualified 3D projection closure', () => {
 
 test('Viewer remains amodal while this package owns only the 3D projection', () => {
   const files = sourceFiles(join(root, 'src')).sort();
-  assert.equal(files.length, 45);
+  assert.equal(files.length, 47);
+  assert.ok(files.some((file) => file.endsWith('ObservedSoleStabilization.ts')));
+  assert.ok(files.some((file) => file.endsWith('IncarnationMaterialProjection.ts')));
   const manifest = json('package.json');
   assert.deepEqual(manifest.exports['./orientation'], { types: './dist/orientationGizmoProjection.d.ts', import: './dist/orientationGizmoProjection.js' });
   assert.deepEqual(manifest.exports['./visual-ground'], { types: './dist/visualGroundConfig.d.ts', import: './dist/visualGroundConfig.js' });
