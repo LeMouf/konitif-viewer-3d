@@ -13,6 +13,8 @@ export interface ObservedRobotPresentationSample {
   sampleId: string;
   connectionId: string;
   sourceObservedAtSeconds: number | null;
+  /** Explicit host guarantee: source timestamps are monotonic within this connection. */
+  sourceClock?: 'monotonic';
   receivedAtMs: number;
   jointValues: Readonly<Record<string, number>>;
 }
@@ -21,6 +23,7 @@ export interface ObservedRobotPresentationConfig {
   minimumTransitionMs: number;
   maximumTransitionMs: number;
   maximumSampleGapMs: number;
+  presentationDelayMs: number;
 }
 
 export interface ObservedRobotPresentationFrame {
@@ -52,8 +55,9 @@ export interface ObservedRobotPresentationStatus {
 
 const DEFAULT_CONFIG: ObservedRobotPresentationConfig = {
   minimumTransitionMs: 16,
-  maximumTransitionMs: 120,
-  maximumSampleGapMs: 250
+  maximumTransitionMs: 200,
+  maximumSampleGapMs: 500,
+  presentationDelayMs: 450
 };
 
 const EMPTY_STATUS: ObservedRobotPresentationStatus = {
@@ -72,10 +76,12 @@ const EMPTY_STATUS: ObservedRobotPresentationStatus = {
  * telemetry samples. Source observations remain immutable and never inherit
  * values produced by this presentation buffer.
  *
- * The transition clock is the local receipt clock. The upstream
- * sourceObservedAtSeconds value is retained as provenance, but it is not used
- * for interpolation because its clock domain is not part of the observation
- * contract yet.
+ * Buffered playback trails the local receipt clock so both interpolation
+ * endpoints are already admitted observations, not predicted destinations.
+ * Without an explicit source-clock guarantee, timing uses local receipts.
+ * A declared monotonic source clock is mapped relatively onto the first local
+ * receipt, preserving sensor spacing through transport bursts. Clock epochs
+ * are never compared, and session changes discard the mapping.
  */
 export class ObservedRobotPresentationBuffer {
   private readonly config: ObservedRobotPresentationConfig;
@@ -85,6 +91,10 @@ export class ObservedRobotPresentationBuffer {
   private transitionSourceSampleIds: readonly string[] = [];
   private transitionStartedAtMs = 0;
   private transitionDurationMs = 0;
+  private receiptCadenceMs: number[] = [];
+  private bufferedSamples: (ObservedRobotPresentationSample & { presentationAtMs: number })[] = [];
+  private previousBufferedSample: (ObservedRobotPresentationSample & { presentationAtMs: number }) | null = null;
+  private sourceClockAnchor: { sourceSeconds: number; receiptMs: number } | null = null;
   private pendingFallbackReason: ObservedRobotPresentationFallbackReason = 'insufficient_samples';
   private status: ObservedRobotPresentationStatus = EMPTY_STATUS;
 
@@ -100,6 +110,9 @@ export class ObservedRobotPresentationBuffer {
     this.config = {
       minimumTransitionMs,
       maximumTransitionMs,
+      presentationDelayMs: typeof config.presentationDelayMs === 'number' && Number.isFinite(config.presentationDelayMs)
+        ? clamp(config.presentationDelayMs, 0, 500)
+        : DEFAULT_CONFIG.presentationDelayMs,
       maximumSampleGapMs: Math.max(
         maximumTransitionMs,
         finitePositive(config.maximumSampleGapMs, DEFAULT_CONFIG.maximumSampleGapMs)
@@ -131,6 +144,10 @@ export class ObservedRobotPresentationBuffer {
     this.transitionSourceSampleIds = [];
     this.transitionStartedAtMs = 0;
     this.transitionDurationMs = 0;
+    this.receiptCadenceMs = [];
+    this.bufferedSamples = [];
+    this.previousBufferedSample = null;
+    this.sourceClockAnchor = null;
     this.pendingFallbackReason = reason;
     this.status = {
       ...EMPTY_STATUS,
@@ -172,8 +189,32 @@ export class ObservedRobotPresentationBuffer {
       return true;
     }
 
-    if (sampleGapMs > this.config.maximumSampleGapMs) {
+    const sourceTimed = previous.sourceClock === 'monotonic' && normalized.sourceClock === 'monotonic' &&
+      previous.sourceObservedAtSeconds !== null && normalized.sourceObservedAtSeconds !== null;
+    const sourceGapMs = sourceTimed
+      ? (normalized.sourceObservedAtSeconds! - previous.sourceObservedAtSeconds!) * 1000 : sampleGapMs;
+    if (sourceTimed && sourceGapMs <= 0) {
+      this.reset('invalid_sample');
+      this.acceptFirstSample(normalized, 'invalid_sample');
+      return true;
+    }
+    if (previous.sourceClock !== normalized.sourceClock || sourceGapMs > this.config.maximumSampleGapMs) {
       this.acceptFirstSample(normalized, 'sample_gap');
+      return true;
+    }
+
+    if (this.mode === 'interpolated' && this.config.presentationDelayMs > 0) {
+      const presentationAtMs = this.resolvePresentationTime(normalized);
+      // Undeclared receipt-clock bursts cannot provide distinct timing.
+      // Source-clock bursts retain every distinct admitted pose.
+      if (this.bufferedSamples.at(-1)?.presentationAtMs === presentationAtMs) this.bufferedSamples.pop();
+      this.bufferedSamples.push({ ...normalized, presentationAtMs });
+      if (this.bufferedSamples.length > 64) {
+        this.previousBufferedSample = this.bufferedSamples[this.bufferedSamples.length - 65]!;
+      }
+      this.bufferedSamples = this.bufferedSamples.slice(-64);
+      this.latestSample = normalized;
+      this.pendingFallbackReason = 'none';
       return true;
     }
 
@@ -190,8 +231,20 @@ export class ObservedRobotPresentationBuffer {
     );
     this.latestSample = normalized;
     this.transitionStartedAtMs = normalized.receivedAtMs;
+    // A transport burst is not a new sensor cadence: keep the recent cadence
+    // instead of turning several queued observations into near-instant jumps.
+    if (sampleGapMs >= this.config.minimumTransitionMs) {
+      this.receiptCadenceMs = [...this.receiptCadenceMs, sampleGapMs].slice(-5);
+    }
+    const sortedCadence = [...this.receiptCadenceMs].sort((left, right) => left - right);
+    const middle = Math.floor(sortedCadence.length / 2);
+    const cadenceMs = sortedCadence.length === 0
+      ? sampleGapMs
+      : sortedCadence.length % 2 === 1
+        ? sortedCadence[middle]!
+        : (sortedCadence[middle - 1]! + sortedCadence[middle]!) / 2;
     this.transitionDurationMs = clamp(
-      sampleGapMs,
+      cadenceMs,
       this.config.minimumTransitionMs,
       this.config.maximumTransitionMs
     );
@@ -208,6 +261,10 @@ export class ObservedRobotPresentationBuffer {
         fallbackReason: latest ? 'invalid_sample' : this.pendingFallbackReason
       };
       return null;
+    }
+
+    if (this.mode === 'interpolated' && this.config.presentationDelayMs > 0) {
+      return this.projectBuffered(renderedAtMs);
     }
 
     if (this.mode === 'raw' || this.transitionDurationMs <= 0) {
@@ -267,6 +324,11 @@ export class ObservedRobotPresentationBuffer {
   }
 
   isActive(renderedAtMs: number): boolean {
+    if (this.mode === 'interpolated' && this.config.presentationDelayMs > 0) {
+      return Boolean(this.latestSample && this.bufferedSamples.length > 1 &&
+        Number.isFinite(renderedAtMs) &&
+        renderedAtMs - this.config.presentationDelayMs < this.bufferedSamples.at(-1)!.presentationAtMs);
+    }
     return Boolean(
       this.mode === 'interpolated' &&
       this.latestSample &&
@@ -274,6 +336,48 @@ export class ObservedRobotPresentationBuffer {
       Number.isFinite(renderedAtMs) &&
       renderedAtMs < this.transitionStartedAtMs + this.transitionDurationMs
     );
+  }
+
+  private projectBuffered(renderedAtMs: number): ObservedRobotPresentationFrame {
+    const latest = this.latestSample!;
+    const targetMs = renderedAtMs - this.config.presentationDelayMs;
+    while (this.bufferedSamples.length > 2 && this.bufferedSamples[1]!.presentationAtMs <= targetMs) {
+      this.previousBufferedSample = this.bufferedSamples.shift()!;
+    }
+    const left = this.bufferedSamples[0]!;
+    const right = this.bufferedSamples[1];
+    const latestTime = this.bufferedSamples.at(-1)!.presentationAtMs;
+    const hasSegment = Boolean(right && targetMs >= left.presentationAtMs && targetMs <= right.presentationAtMs);
+    const endpoint = targetMs < left.presentationAtMs ? left : latest;
+    const durationMs = hasSegment ? right!.presentationAtMs - left.presentationAtMs : 0;
+    const alpha = hasSegment ? clamp((targetMs - left.presentationAtMs) / durationMs, 0, 1) : 1;
+    const active = this.isActive(renderedAtMs);
+    const previous = this.previousBufferedSample;
+    const following = this.bufferedSamples[2];
+    const frame: ObservedRobotPresentationFrame = {
+      mode: this.mode,
+      state: hasSegment ? 'interpolated' : 'fallback',
+      fallbackReason: hasSegment ? 'none' : targetMs > latestTime ? 'sample_gap'
+        : this.pendingFallbackReason === 'none' ? 'insufficient_samples' : this.pendingFallbackReason,
+      provenance: hasSegment ? 'observed-interpolated' : 'observed-raw',
+      sourceSampleIds: hasSegment ? [previous, left, right, following].filter((sample): sample is NonNullable<typeof sample> => Boolean(sample)).map(sample => sample.sampleId) : [endpoint.sampleId],
+      connectionId: latest.connectionId,
+      sourceObservedAtSeconds: hasSegment ? right!.sourceObservedAtSeconds : endpoint.sourceObservedAtSeconds,
+      renderedAtMs,
+      latestReceivedAtMs: latest.receivedAtMs,
+      interpolationAlpha: alpha,
+      transitionDurationMs: durationMs,
+      active,
+      jointValues: hasSegment ? Object.fromEntries(Object.entries(right!.jointValues).map(([name, value]) => [
+        name, interpolateBufferedJoint(
+          left.jointValues[name] ?? value, value, alpha, durationMs,
+          previous?.jointValues[name], previous ? left.presentationAtMs - previous.presentationAtMs : null,
+          following?.jointValues[name], following ? following.presentationAtMs - right!.presentationAtMs : null
+        )
+      ])) : { ...endpoint.jointValues }
+    };
+    this.status = createStatus(frame);
+    return frame;
   }
 
   private acceptFirstSample(
@@ -285,8 +389,19 @@ export class ObservedRobotPresentationBuffer {
     this.transitionSourceSampleIds = [sample.sampleId];
     this.transitionStartedAtMs = sample.receivedAtMs;
     this.transitionDurationMs = 0;
+    this.receiptCadenceMs = [];
+    this.sourceClockAnchor = sample.sourceClock === 'monotonic' && sample.sourceObservedAtSeconds !== null
+      ? { sourceSeconds: sample.sourceObservedAtSeconds, receiptMs: sample.receivedAtMs } : null;
+    this.bufferedSamples = [{ ...sample, presentationAtMs: sample.receivedAtMs }];
+    this.previousBufferedSample = null;
     this.pendingFallbackReason =
       fallbackReason === 'none' ? 'insufficient_samples' : fallbackReason;
+  }
+
+  private resolvePresentationTime(sample: ObservedRobotPresentationSample): number {
+    return this.sourceClockAnchor && sample.sourceClock === 'monotonic' && sample.sourceObservedAtSeconds !== null
+      ? this.sourceClockAnchor.receiptMs + (sample.sourceObservedAtSeconds - this.sourceClockAnchor.sourceSeconds) * 1000
+      : sample.receivedAtMs;
   }
 }
 
@@ -296,6 +411,7 @@ function normalizeSample(
   if (
     !sample.sampleId ||
     !sample.connectionId ||
+    (sample.sourceClock === 'monotonic' && sample.sourceObservedAtSeconds === null) ||
     !Number.isFinite(sample.receivedAtMs) ||
     (sample.sourceObservedAtSeconds !== null && !Number.isFinite(sample.sourceObservedAtSeconds))
   ) {
@@ -340,4 +456,28 @@ function finitePositive(value: number | undefined, fallback: number): number {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+/** Shape-preserving Hermite interpolation using only admitted neighboring poses. */
+function interpolateBufferedJoint(left: number, right: number, alpha: number, duration: number,
+  previous: number | undefined, previousDuration: number | null,
+  following: number | undefined, followingDuration: number | null): number {
+  const delta = interpolateJointAngle(left, right, 1) - left;
+  const secant = delta / duration;
+  const tangent = (a: number, b: number, ha: number, hb: number) => {
+    if (a * b <= 0) return 0;
+    const w1 = 2 * hb + ha;
+    const w2 = hb + 2 * ha;
+    return (w1 + w2) / (w1 / a + w2 / b);
+  };
+  const start = previous !== undefined && previousDuration !== null && previousDuration > 0
+    ? tangent((interpolateJointAngle(previous, left, 1) - previous) / previousDuration, secant, previousDuration, duration)
+    : secant;
+  const end = following !== undefined && followingDuration !== null && followingDuration > 0
+    ? tangent(secant, (interpolateJointAngle(right, following, 1) - right) / followingDuration, duration, followingDuration)
+    : secant;
+  const t2 = alpha * alpha;
+  const t3 = t2 * alpha;
+  const offset = (-2 * t3 + 3 * t2) * delta + (t3 - 2 * t2 + alpha) * duration * start + (t3 - t2) * duration * end;
+  return left + clamp(offset, Math.min(0, delta), Math.max(0, delta));
 }

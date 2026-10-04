@@ -119,6 +119,9 @@
       "symbolNames": [
         "Viewer3D",
         "Viewer3DOptions",
+        "Viewer3DIncarnationMaterialProjection",
+        "IncarnationMaterialProjector",
+        "normalizeIncarnationMaterialProjection",
         "normalizeConfiguredDisplayFrameRate"
       ]
     },
