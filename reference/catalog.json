@@ -4,6 +4,16 @@
   "intent": "Project a subject into a 3D scene without granting the view authority over the subject.",
   "clusters": [
     {
+      "id": "local-cpu-observation",
+      "title": "Local CPU observation",
+      "summary": "Optional host-owned CPU metrics around existing renderer operations.",
+      "authority": "Renderer produces operation durations; host controls collection and presentation.",
+      "owns": ["operation timing boundaries"],
+      "doesNotOwn": ["GPU execution timing", "browser-wide load", "host sampling policy"],
+      "workflow": ["Attach", "Observe", "Detach"],
+      "symbolNames": ["ViewerPerformanceObserver", "measureViewerOperation"]
+    },
+    {
       "id": "orientation-projection",
       "title": "Camera orientation projection",
       "summary": "Pure camera quaternion projection into a CSS orientation compass.",

@@ -25,6 +25,7 @@ export * from './RobotPoseTransition.js';
 export * from './RobotPostureCompensation.js';
 export * from './ObservedRobotGroundingProjection.js';
 export * from './PerformanceMonitor.js';
+export * from './PerformanceObservation.js';
 export * from './ViewerTemporalProjectionExperimentAdapter.js';
 export type { ViewerExperimentCollector } from './ViewerExperimentCollector.js';
 export type { ViewerExperimentPort, ViewerExperimentStart } from './ViewerExperimentPort.js';
