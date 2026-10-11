@@ -105,6 +105,21 @@ The curve stays inside each segment's angular endpoints and stops at missing
 data; its provenance includes the neighboring observations used for tangents.
 This does not add visual delay or extrapolate a future pose.
 
+## Optional local CPU observation
+
+Hosts can attach a borrowed observer with `setPerformanceObserver(observer)`
+and detach it with `setPerformanceObserver(null)`. The observer supplies
+`isEnabled(label)` and `recordMeasure(label, durationMs)`; it may select metrics
+and sample operations without the renderer starting another loop or timer.
+
+The metrics are `viewer.loop.cpu`, `viewer.controls.cpu` and `viewer.draw.cpu`.
+They measure CPU elapsed time around existing operations, not GPU completion.
+The loop includes controls and drawing: these durations must not be added as
+independent costs. An idle or hidden viewer does not render merely to produce
+measurements. Disabled observation avoids its timing reads; observer exceptions
+cannot replace a renderer result or error. Destroying the renderer detaches the
+observer without taking ownership of host resources.
+
 ## Reference
 
 See [`reference/`](reference/) for the machine-readable capability catalog and

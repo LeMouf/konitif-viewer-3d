@@ -1,3 +1,4 @@
+import { measureViewerOperation, type ViewerPerformanceObserver } from './PerformanceObservation.js';
 import {
   createViewerPhysicsFrameQuaternion, resolveViewerSceneYaw,
   projectViewerImpulseByFrame, projectViewerPointByFrame
@@ -2338,6 +2339,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     return this.performanceMonitor.getSummary();
   }
 
+  private performanceObserver: ViewerPerformanceObserver | null = null;
+
+  /** Borrowed, optional sink. Does not allocate a loop, timer or browser observer. */
+  setPerformanceObserver(observer: ViewerPerformanceObserver | null): void {
+    this.performanceObserver = observer;
+  }
+
   setTemporalProjectionMode(mode: ViewerTemporalProjectionMode): void {
     if (this.temporalProjection.getMode() === mode) {
       return;
@@ -4503,6 +4511,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   destroy(options: Viewer3DDestroyOptions = {}): void {
+    this.performanceObserver = null;
     if (this.destroyed) {
       return;
     }
@@ -5457,6 +5466,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       return;
     }
 
+    measureViewerOperation(this.performanceObserver, 'viewer.loop.cpu', () => this.runFrame());
+  };
+
+  private runFrame(): void {
+
     const loopStartedAt = performance.now();
     const rafNow = loopStartedAt;
     this.temporalScheduler.frame(rafNow / 1000);
@@ -5548,7 +5562,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       const shouldUpdateControls =
         this.controls.enabled && (this.controlsActive || this.controlsSettlingFrames > 0);
       if (shouldUpdateControls) {
-        this.controls.update();
+        measureViewerOperation(this.performanceObserver, 'viewer.controls.cpu', () => this.controls.update());
       }
       if (shouldUpdateControls) {
         this.markFrameSignal('controls');
@@ -5648,9 +5662,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     if (shouldContinueLoop && this.animationLoop.isIdle()) {
       this.scheduleLoop();
     }
-  };
+  }
 
   private render(): void {
+    measureViewerOperation(this.performanceObserver, 'viewer.draw.cpu', () => this.renderScene());
+  }
+
+  private renderScene(): void {
     this.projectComparisonSimulation();
     if (this.observedRobotGhostMirrorsSimulatedRobot) {
       this.syncObservedRobotGhostFromSimulatedRobot();

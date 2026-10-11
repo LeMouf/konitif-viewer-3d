@@ -6,6 +6,7 @@ import {
 } from '@konitif/viewer-3d';
 import {
   Viewer3D,
+  measureViewerOperation,
   VIEWER3D_PROJECTILE_PARTICLE_LIMIT as rendererParticleLimit,
   normalizeConfiguredDisplayFrameRate,
   resolveViewerPoseHandleDistanceOpacity
@@ -19,6 +20,12 @@ assert.equal(resolveViewerOrientationGizmoTransform({ x: 0, y: 0, z: 0, w: 1 }),
 
 assert.equal(typeof document, 'undefined');
 assert.equal(typeof Viewer3D, 'function');
+assert.equal(typeof Viewer3D.prototype.setPerformanceObserver, 'function');
+const localMeasures = [];
+let measuredTime = 0;
+assert.equal(measureViewerOperation({ isEnabled: () => true, recordMeasure: (...args) => localMeasures.push(args) },
+  'viewer.draw.cpu', () => { measuredTime = 2; return 42; }, () => measuredTime), 42);
+assert.deepEqual(localMeasures, [['viewer.draw.cpu', 2]]);
 assert.equal(typeof Viewer3D.prototype.setIncarnationMaterialProjection, 'function');
 // Verify the retained release archive, not merely the source checkout.
 const { Group, Mesh, BoxGeometry, MeshPhysicalMaterial } = await import('three');
