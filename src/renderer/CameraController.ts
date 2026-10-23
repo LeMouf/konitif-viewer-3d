@@ -507,6 +507,12 @@ export class CameraController {
     const toTarget = new Vector3(target.x, target.y, target.z);
     const toUp = up ? new Vector3(up.x, up.y, up.z) : undefined;
     const fromUp = this.host.getCamera().up.clone().normalize();
+    if (callbacks.orbit) this.cameraTransitionOnCancel = () => {
+      const camera = this.host.getCamera();
+      const pivot = this.host.controls?.target ?? fromTarget;
+      this.applyCameraPoseImmediate(camera.position.clone(), pivot.clone(), fromUp);
+      callbacks.onCancel?.();
+    };
     const upRotation = toUp
       ? new Quaternion().setFromUnitVectors(fromUp, toUp.clone().normalize())
       : null;
@@ -548,7 +554,7 @@ export class CameraController {
             .applyQuaternion(currentUpRotation.identity().slerp(upRotation, eased))
             .normalize()
         : undefined;
-      if(callbacks.orbit){rotation.copy(fromRotation).slerp(toRotation,eased);currentPosition.set(0,0,fromDistance+(toDistance-fromDistance)*eased).applyQuaternion(rotation).add(currentTarget);interpolatedUp=currentUp.set(0,1,0).applyQuaternion(rotation);}
+      if(callbacks.orbit){rotation.copy(fromRotation).slerp(toRotation,eased);currentPosition.set(0,0,fromDistance+(toDistance-fromDistance)*eased).applyQuaternion(rotation).add(currentTarget);interpolatedUp=progress>=1?(toUp??fromUp):currentUp.set(0,1,0).applyQuaternion(rotation);}
       camera.zoom=fromZoom+(toZoom-fromZoom)*eased;
       this.applyCameraPoseImmediate(currentPosition, currentTarget, interpolatedUp);
 
