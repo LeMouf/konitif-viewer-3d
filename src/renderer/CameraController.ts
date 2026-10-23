@@ -13,6 +13,7 @@ const ROBOT_VIEWER_ORTHOGRAPHIC_GROUND_MARGIN = 0.02;
 type CameraLike = PerspectiveCamera | OrthographicCamera;
 type ViewerCameraControls = {
   readonly target: Vector3;
+  readonly enableRotate?: boolean;
   update(): boolean | void;
 };
 
@@ -729,6 +730,12 @@ export class CameraController {
 
   handleControlsStart(): void {
     this.cancelCameraTransition();
+    // A cardinal view may need a special screen-up vector (top/bottom).
+    // Free world-up orbit must not reuse that rendering basis as its pole.
+    const camera = this.host.getCamera();
+    if (this.host.getOptions().cameraControlMode === 'orbit' && this.host.controls.enableRotate !== false && camera.up.distanceToSquared(new Vector3(0, 1, 0)) > 1e-12) {
+      this.host.applyCameraPose(camera.position.clone(), this.host.controls.target.clone(), new Vector3(0, 1, 0));
+    }
     this.host.setControlsActive(true);
     this.host.setControlsSettlingFrames(ROBOT_VIEWER_CONTROLS_SETTLING_FRAMES);
     this.host.requestRender();
