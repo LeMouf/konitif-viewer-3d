@@ -1,3 +1,5 @@
+import {ViewerCardinalGridLayer} from './CardinalGridLayer.js';
+import {ViewerSceneEnvironmentLayer} from './SceneEnvironmentLayer.js';
 import { measureViewerOperation, type ViewerPerformanceObserver } from './PerformanceObservation.js';
 import {
   createViewerPhysicsFrameQuaternion, resolveViewerSceneYaw,
@@ -982,6 +984,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private gridHelper: GridHelper | null = null;
   private visualGroundLayer: VisualGroundLayer | null = null;
   private keyLight: DirectionalLight | null = null;
+  private cardinalGrid:ViewerCardinalGridLayer|null=null;
+  private sceneDayCycle:ViewerSceneEnvironmentLayer|null=null;
   private trajectoryGroup: Group | null = null;
   private contactPointGroup: Group | null = null;
   private physicsDebugGroup: Group | null = null;
@@ -1534,6 +1538,19 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.globalRafProbeFrame = 0;
     }
   }
+
+  /** Set a static local solar time; the caller owns persistence and playback. */
+  setSceneTimeHours(timeHours:number):void{
+    this.sceneDayCycle??=new ViewerSceneEnvironmentLayer(this.scene,this.renderer,this.keyLight,()=>this.requestRender(),this.options.transparent);
+    this.sceneDayCycle.setTime(timeHours);
+  }
+
+  setCardinalGridVisible(visible:boolean):void{
+    if(visible)this.cardinalGrid??=new ViewerCardinalGridLayer(this.scene,()=>this.controls.target,this.renderer.domElement.parentElement??undefined);
+    else{this.cardinalGrid?.dispose();this.cardinalGrid=null;}
+    this.requestRender();
+  }
+  clearSceneTimeHours():void{this.sceneDayCycle?.dispose();this.sceneDayCycle=null;this.applyTheme();}
 
   setGridVisible(showGrid: boolean): void {
     if (this.options.showGrid === showGrid) {
@@ -4518,6 +4535,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   destroy(options: Viewer3DDestroyOptions = {}): void {
+    this.cardinalGrid?.dispose();this.cardinalGrid=null;
+    this.sceneDayCycle?.dispose();this.sceneDayCycle=null;
     this.performanceObserver = null;
     if (this.destroyed) {
       return;
@@ -4854,6 +4873,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.scene.fog.color.copy(backgroundColor);
     }
 
+    this.sceneDayCycle?.apply();
     if (!this.gridHelper) {
       this.requestRender();
       return;
@@ -5679,6 +5699,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private renderScene(): void {
+    this.cardinalGrid?.update(this.camera);
     this.projectComparisonSimulation();
     if (this.observedRobotGhostMirrorsSimulatedRobot) {
       this.syncObservedRobotGhostFromSimulatedRobot();

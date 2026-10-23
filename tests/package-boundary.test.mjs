@@ -64,7 +64,8 @@ test('the package and lock bind the qualified 3D projection closure', () => {
 
 test('Viewer remains amodal while this package owns only the 3D projection', () => {
   const files = sourceFiles(join(root, 'src')).sort();
-  assert.equal(files.length, 49);
+  assert.equal(files.length, 53);
+  assert.ok(files.some(file=>file.endsWith('SceneDayCycle.ts')));
   assert.ok(files.some((file) => file.endsWith('OrthographicGroundReflection.ts')));
   assert.ok(files.some((file) => file.endsWith('PerformanceObservation.ts')));
   assert.ok(files.some((file) => file.endsWith('ObservedSoleStabilization.ts')));
