@@ -1493,6 +1493,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.scheduleLoop();
   }
 
+  /** Signal a projection-only change made to caller-owned scene contributions.
+   * Uses the viewer's existing coalesced frame loop; does not advance simulation or transport.
+   */
+  requestPresentationFrame(): void {
+    this.requestRender();
+  }
+
   setStatsVisible(showStats: boolean): void {
     if (this.options.showStats === showStats) {
       return;
@@ -5132,7 +5139,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.perspectiveCamera.near = planes.near;
     this.perspectiveCamera.far = planes.far;
     this.perspectiveCamera.updateProjectionMatrix();
-    this.orthographicCamera.near = planes.near;
+    // Orthographic projection has no perspective eye plane. Include geometry
+    // on both sides of the camera plane, especially the foreground floor
+    // at grazing angles; otherwise it is sliced by a positive near plane.
+    this.orthographicCamera.near = -planes.far;
     this.orthographicCamera.far = planes.far;
     this.orthographicCamera.updateProjectionMatrix();
   }
@@ -6531,6 +6541,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           ? copyViewerMetadata(currentTransform.metadata)
           : undefined
     };
+  }
+
+  /** Invalidate the on-demand projection after caller-owned scene changes. */
+  notifySceneChanged(): void {
+    if (!this.destroyed) this.requestRender();
   }
 
   private requestRender(): void {
@@ -14758,11 +14773,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     target: RobotViewerVector = this.options.cameraTarget,
     up?: RobotViewerVector
   ): void {
-    if (this.options.cameraControlMode === 'orbit') {
+    if (this.options.cameraControlMode === 'orbit' && !up) {
       const worldUpPose = resolveWorldUpCameraPose(
         new Vector3(position.x, position.y, position.z),
         new Vector3(target.x, target.y, target.z),
-        up ? new Vector3(up.x, up.y, up.z) : this.camera.up
+        this.camera.up
       );
       this.cameraController.setCameraPose(
         this.serializeCameraVector(worldUpPose.position),
@@ -14846,9 +14861,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     position: RobotViewerVector,
     target: RobotViewerVector = this.options.cameraTarget,
     durationMs = 420,
-    up?: RobotViewerVector
+    up?: RobotViewerVector,
+    transition: {zoom?:number;orbit?:boolean;onComplete?:()=>void;onCancel?:()=>void} = {}
   ): void {
-    if (this.options.cameraControlMode === 'orbit') {
+    if (this.options.cameraControlMode === 'orbit' && !transition.orbit) {
       const worldUpPose = resolveWorldUpCameraPose(
         new Vector3(position.x, position.y, position.z),
         new Vector3(target.x, target.y, target.z),
@@ -14858,12 +14874,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
         this.serializeCameraVector(worldUpPose.position),
         target,
         durationMs,
-        this.serializeCameraVector(worldUpPose.up)
+        this.serializeCameraVector(worldUpPose.up),
+        transition
       );
       return;
     }
 
-    this.cameraController.transitionCameraPose(position, target, durationMs, up);
+    this.cameraController.transitionCameraPose(position, target, durationMs, up, transition);
   }
 
   resetCameraView(durationMs = 520): void {

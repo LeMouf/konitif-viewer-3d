@@ -1,4 +1,4 @@
-import { Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
+import { Matrix4, Object3D, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import type {
   RobotViewerQuaternion,
   RobotViewerVector,
@@ -288,10 +288,9 @@ export function resolveOrthographicGroundCoveragePose(
   const lift = Math.max(0, floorY + Math.max(0, margin) - lowerRayOriginY);
 
   if (lift > 0) {
-    // Translate position and target together: the ISO orientation and scale
-    // remain unchanged while the robot gains the missing foreground floor.
-    nextPosition.y += lift;
-    nextTarget.y += lift;
+    // Retreat along the viewing axis: orthographic framing, orientation and pivot
+    // stay unchanged while the ray origins move above the floor.
+    nextPosition.addScaledVector(forward, -lift / -forward.y);
   }
 
   return { position: nextPosition, target: nextTarget, lift };
@@ -496,7 +495,7 @@ export class CameraController {
     target: RobotViewerVector = this.host.getOptions().cameraTarget,
     durationMs = 420,
     up?: RobotViewerVector,
-    callbacks: { onComplete?: () => void; onCancel?: () => void } = {}
+    callbacks: { onComplete?: () => void; onCancel?: () => void; zoom?: number; orbit?: boolean } = {}
   ): void {
     this.cancelCameraTransition();
     this.cameraTransitionOnCancel = callbacks.onCancel ?? null;
@@ -516,8 +515,13 @@ export class CameraController {
     const currentUp = new Vector3();
     const currentUpRotation = new Quaternion();
     const duration = Math.max(0, durationMs);
+    const camera = this.host.getCamera(), fromZoom=camera.zoom;
+    const toZoom=Number.isFinite(callbacks.zoom)&&callbacks.zoom!>0?callbacks.zoom!:fromZoom;
+    const fromRotation=camera.quaternion.clone(),toRotation=new Quaternion().setFromRotationMatrix(new Matrix4().lookAt(toPosition,toTarget,toUp??fromUp)),rotation=new Quaternion();
+    const fromDistance=fromPosition.distanceTo(fromTarget),toDistance=toPosition.distanceTo(toTarget);
 
     if (duration <= 0 || typeof requestAnimationFrame === 'undefined') {
+      camera.zoom=toZoom;
       this.applyCameraPoseImmediate(toPosition, toTarget, toUp);
       this.cameraTransitionOnCancel = null;
       callbacks.onComplete?.();
@@ -538,12 +542,14 @@ export class CameraController {
       const eased = easeViewerTransition(progress);
       currentPosition.lerpVectors(fromPosition, toPosition, eased);
       currentTarget.lerpVectors(fromTarget, toTarget, eased);
-      const interpolatedUp = upRotation
+      let interpolatedUp = upRotation
         ? currentUp
             .copy(fromUp)
             .applyQuaternion(currentUpRotation.identity().slerp(upRotation, eased))
             .normalize()
         : undefined;
+      if(callbacks.orbit){rotation.copy(fromRotation).slerp(toRotation,eased);currentPosition.set(0,0,fromDistance+(toDistance-fromDistance)*eased).applyQuaternion(rotation).add(currentTarget);interpolatedUp=currentUp.set(0,1,0).applyQuaternion(rotation);}
+      camera.zoom=fromZoom+(toZoom-fromZoom)*eased;
       this.applyCameraPoseImmediate(currentPosition, currentTarget, interpolatedUp);
 
       if (progress < 1) {
@@ -671,7 +677,9 @@ export class CameraController {
   }
 
   applyCameraPoseImmediate(position: Vector3, target: Vector3, up?: Vector3): void {
-    const viewHeight = this.host.resolveOrthographicViewHeightFromPerspectiveDistance(position.distanceTo(target));
+    const viewHeight = this.host.getOptions().cameraProjection === 'iso'
+      ? this.host.getOrthographicViewHeight()
+      : this.host.resolveOrthographicViewHeightFromPerspectiveDistance(position.distanceTo(target));
     this.host.setOrthographicViewHeight(viewHeight);
     const pose = this.resolveProjectionPose(position, target, up, viewHeight);
     this.host.applyCameraPose(pose.position, pose.target, up);
@@ -697,9 +705,7 @@ export class CameraController {
     if (cameraProjection === 'iso') this.host.setOrthographicViewHeight(viewHeight);
 
     const currentUp = camera.up.clone();
-    const pose = cameraProjection === 'iso'
-      ? resolveOrthographicGroundCoveragePose(position, target, currentUp, viewHeight)
-      : { position, target, lift: 0 };
+    const pose = { position, target, lift: 0 };
     options.cameraProjection = cameraProjection;
     this.host.applyCameraPose(pose.position, pose.target, currentUp);
     this.host.setCamera(cameraProjection === 'iso' ? this.host.orthographicCamera : this.host.perspectiveCamera);
@@ -730,22 +736,6 @@ export class CameraController {
   handleControlsEnd(): void {
     this.host.setControlsActive(false);
     this.host.setControlsSettlingFrames(ROBOT_VIEWER_CONTROLS_SETTLING_FRAMES);
-    const options = this.host.getOptions();
-    if (options.cameraProjection === 'iso') {
-      const camera = this.host.getCamera();
-      const target = this.host.controls.target.clone();
-      const pose = resolveOrthographicGroundCoveragePose(
-        camera.position,
-        target,
-        camera.up,
-        this.host.getOrthographicViewHeight()
-      );
-      if (pose.lift > 0) {
-        this.host.applyCameraPose(pose.position, pose.target, camera.up);
-        this.host.controls.target.copy(pose.target);
-        this.host.controls.update();
-      }
-    }
     this.host.requestRender();
   }
 
@@ -755,13 +745,8 @@ export class CameraController {
     up: Vector3 | undefined,
     viewHeight: number
   ): OrthographicGroundCoveragePose {
-    return this.host.getOptions().cameraProjection === 'iso'
-      ? resolveOrthographicGroundCoveragePose(
-          position,
-          target,
-          up ?? this.host.getCamera().up,
-          viewHeight
-        )
-      : { position, target, lift: 0 };
+    // Orthographic clipping includes the ground behind the camera plane.
+    // Never move the user's pivot or orbit distance to hide a clipping edge.
+    return { position, target, lift: 0 };
   }
 }
