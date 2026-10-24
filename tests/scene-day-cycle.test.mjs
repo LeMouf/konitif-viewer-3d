@@ -1,8 +1,20 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {Color,DirectionalLight,HemisphereLight,Scene,Mesh,BoxGeometry,MeshBasicMaterial} from 'three';
+import {FogExp2,Color,DirectionalLight,HemisphereLight,Scene,Mesh,BoxGeometry,MeshBasicMaterial} from 'three';
 import {projectViewerSceneDayCycle,wrapViewerSceneTime} from '../dist/renderer/SceneDayCycle.js';
 import {ViewerSceneEnvironmentLayer} from '../dist/renderer/SceneEnvironmentLayer.js';
 test('day/night wraps continuously and preserves finite celestial lighting',()=>{assert.equal(wrapViewerSceneTime(-1),23);assert.equal(wrapViewerSceneTime(25),1);assert.equal(wrapViewerSceneTime(NaN),12);assert.deepEqual(projectViewerSceneDayCycle(24),projectViewerSceneDayCycle(0));for(let h=0;h<24;h+=.25){const p=projectViewerSceneDayCycle(h);assert.ok(p.exposure>=.22&&p.exposure<=1);assert.ok(Number.isFinite(p.keyIntensity)&&p.keyIntensity>=0);assert.ok(Math.abs(Math.hypot(p.direction.x,p.direction.y,p.direction.z)-1)<1e-9);}assert.ok(projectViewerSceneDayCycle(12).exposure>projectViewerSceneDayCycle(0).exposure);assert.notEqual(projectViewerSceneDayCycle(12).zenith,projectViewerSceneDayCycle(0).zenith);});
 test('a scene environment updates existing lighting and restores caller state on disposal',()=>{const scene=new Scene(),background=new Color('#112233');scene.background=background;const key=new DirectionalLight('#ffeedd',1.3),ambient=new HemisphereLight('#ffffff','#334455',1.8);key.position.set(4,10,3);scene.add(key,ambient);const subject=new Mesh(new BoxGeometry(),new MeshBasicMaterial()),geometry=subject.geometry,material=subject.material;scene.add(subject);const renderer={toneMappingExposure:.8,shadowMap:{needsUpdate:false}},before={intensity:key.intensity,color:key.color.clone(),position:key.position.clone(),ambient:ambient.intensity};let frames=0;const layer=new ViewerSceneEnvironmentLayer(scene,renderer,key,()=>frames++);layer.setTime(0);assert.notEqual(renderer.toneMappingExposure,.8);assert.equal(subject.geometry,geometry);assert.equal(subject.material,material);assert.ok(scene.getObjectByName('Viewer scene day/night sky'));layer.setTime(12);assert.ok(frames>=2);const sky=scene.getObjectByName('Viewer scene day/night sky');assert.ok(sky.material.fragmentShader.includes('\n#include <tonemapping_fragment>'));layer.dispose();assert.equal(scene.background,background);assert.equal(renderer.toneMappingExposure,.8);assert.equal(key.intensity,before.intensity);assert.ok(key.color.equals(before.color));assert.ok(key.position.equals(before.position));assert.equal(ambient.intensity,before.ambient);assert.equal(scene.getObjectByName('Viewer scene day/night sky'),undefined);});
 
 test('transparent viewer composition keeps the sky and background transparent',()=>{const scene=new Scene(),renderer={toneMappingExposure:1,shadowMap:{needsUpdate:false}},layer=new ViewerSceneEnvironmentLayer(scene,renderer,null,()=>{},true);layer.setTime(12);assert.equal(scene.background,null);assert.equal(scene.getObjectByName('Viewer scene day/night sky').visible,false);layer.dispose();});
+
+
+test('manual fog survives day/night and reapplication, disabled stays disabled',()=>{
+ const scene=new Scene(),renderer={toneMappingExposure:1,shadowMap:{needsUpdate:false}},layer=new ViewerSceneEnvironmentLayer(scene,renderer,null,()=>{});
+ layer.setFog({enabled:true,density:.12});layer.setTime(0);assert.equal(scene.fog.density,.12);
+ const fog=scene.fog;layer.setTime(12);assert.equal(scene.fog,fog);assert.equal(scene.fog.density,.12);
+ layer.setFog({enabled:false,density:.12});layer.setTime(18);assert.equal(scene.fog,null);
+ layer.setFog({enabled:true,density:null});assert.notEqual(scene.fog.density,.12);
+ layer.dispose();assert.equal(scene.fog,null);
+});
+
+test('fog projection does not mutate caller fog restored on disposal',()=>{const scene=new Scene(),fog=new FogExp2('#abcdef',.21);scene.fog=fog;const layer=new ViewerSceneEnvironmentLayer(scene,{toneMappingExposure:1,shadowMap:{needsUpdate:false}},null,()=>{});layer.setTime(12);layer.setFog({enabled:true,density:.4});assert.equal(fog.density,.21);layer.dispose();assert.equal(scene.fog,fog);assert.equal(fog.color.getHexString(),'abcdef');});

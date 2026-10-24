@@ -986,6 +986,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private keyLight: DirectionalLight | null = null;
   private cardinalGrid:ViewerCardinalGridLayer|null=null;
   private sceneDayCycle:ViewerSceneEnvironmentLayer|null=null;
+  private sceneFog:{enabled:boolean;density:number|null}|null=null;
   private trajectoryGroup: Group | null = null;
   private contactPointGroup: Group | null = null;
   private physicsDebugGroup: Group | null = null;
@@ -1542,7 +1543,15 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   /** Set a static local solar time; the caller owns persistence and playback. */
   setSceneTimeHours(timeHours:number):void{
     this.sceneDayCycle??=new ViewerSceneEnvironmentLayer(this.scene,this.renderer,this.keyLight,()=>this.requestRender(),this.options.transparent);
+    this.sceneDayCycle.setFog(this.sceneFog);
     this.sceneDayCycle.setTime(timeHours);
+  }
+
+  /** A null density delegates to the environment. Manual density survives day/night and theme changes. */
+  setSceneFog(settings:{enabled:boolean;density:number|null}|null):void{
+    this.sceneFog=settings?{enabled:settings.enabled,density:typeof settings.density==='number'&&Number.isFinite(settings.density)?Math.max(0,Math.min(.5,settings.density)):null}:null;
+    if(this.sceneDayCycle)this.sceneDayCycle.setFog(this.sceneFog);else this.updateVisualGroundEnvironment();
+    this.requestRender();
   }
 
   setCardinalGridVisible(visible:boolean):void{
@@ -4727,7 +4736,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.updateVisualGroundShadowCasters();
     this.updateVisualGroundFocusTiltPasses();
 
-    const fogEnabled = this.options.showVisualGround && (config?.components.fogFade ?? true);
+    const fogEnabled = this.sceneFog?.enabled ?? (this.options.showVisualGround && (config?.components.fogFade ?? true));
     if (!fogEnabled || this.options.transparent) {
       this.scene.fog = null;
       return;
@@ -4735,7 +4744,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     const themeBackgroundColor = this.resolveThemeColor('--color-background-canvas', '#111722');
     const fogColor = this.resolveVisualGroundSkyColor(themeBackgroundColor);
-    const fogDensity = config?.fogDensity ?? DEFAULT_VIEWER_VISUAL_GROUND_CONFIG.fogDensity;
+    const fogDensity = this.sceneFog?.density ?? config?.fogDensity ?? DEFAULT_VIEWER_VISUAL_GROUND_CONFIG.fogDensity;
     if (this.scene.fog instanceof FogExp2) {
       // Preserve the same fog authority while Viewer settings react. Replacing
       // the object on every layer update invalidated material state and could

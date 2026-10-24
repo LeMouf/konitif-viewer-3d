@@ -3,6 +3,8 @@ import {projectViewerSceneDayCycle,type ViewerSceneDayCycle} from './SceneDayCyc
 /** Optional renderer layer; geometry/material identity and caller-authored lights remain untouched. */
 export class ViewerSceneEnvironmentLayer{
  private time=12;
+ private fogSettings:{enabled:boolean;density:number|null}|null=null;
+ setFog(settings:{enabled:boolean;density:number|null}|null){this.fogSettings=settings;return this.apply();}
  private readonly background;private readonly fog;private readonly exposure;
  private readonly lights:{light:Light;color:Color;intensity:number;position:Vector3;ground?:Color}[]=[];
  private readonly sky:Mesh<SphereGeometry,ShaderMaterial>;
@@ -19,7 +21,7 @@ void main(){float y=normalize(direction).y;vec3 color=y>=0.?mix(horizon,zenith,p
  }
  setTime(timeHours:number):ViewerSceneDayCycle{this.time=timeHours;return this.apply();}
  apply():ViewerSceneDayCycle{
-  const p=projectViewerSceneDayCycle(this.time);this.scene.background=this.transparent?null:new Color(p.horizon);this.scene.fog=new FogExp2(p.horizon,.025+.02*(1-p.daylight));this.renderer.toneMappingExposure=p.exposure;
+  const p=projectViewerSceneDayCycle(this.time);this.scene.background=this.transparent?null:new Color(p.horizon);if(this.transparent||this.fogSettings?.enabled===false)this.scene.fog=null;else{const density=this.fogSettings?.density??(.025+.02*(1-p.daylight));if(this.scene.fog instanceof FogExp2&&this.scene.fog!==this.fog){this.scene.fog.color.set(p.horizon);this.scene.fog.density=density;}else this.scene.fog=new FogExp2(p.horizon,density);}this.renderer.toneMappingExposure=p.exposure;
   this.sky.material.uniforms.zenith.value.set(p.zenith);this.sky.material.uniforms.horizon.value.set(p.horizon);this.sky.material.uniforms.ground.value.set(p.ground);
   for(const entry of this.lights){const light=entry.light;light.color.copy(entry.color);if(light===this.key){light.color.set(p.light);light.intensity=entry.intensity*p.keyIntensity;light.position.set(p.direction.x,p.direction.y,p.direction.z).multiplyScalar(10);}else{light.intensity=entry.intensity*(.2+.8*p.daylight);if(light instanceof HemisphereLight){light.color.set(p.horizon);light.groundColor.set(p.ground);}}}
   this.renderer.shadowMap.needsUpdate=true;this.invalidate();return p;
