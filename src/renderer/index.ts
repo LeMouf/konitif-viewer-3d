@@ -30,3 +30,5 @@ export * from './ViewerTemporalProjectionExperimentAdapter.js';
 export type { ViewerExperimentCollector } from './ViewerExperimentCollector.js';
 export type { ViewerExperimentPort, ViewerExperimentStart } from './ViewerExperimentPort.js';
 export * from './robotViewerMotion.js';
+
+export * from './SceneDayCycle.js';

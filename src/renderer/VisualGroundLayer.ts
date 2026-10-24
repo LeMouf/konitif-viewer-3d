@@ -35,6 +35,7 @@ import {
   type Material
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
+import {createOrthographicGroundReflection} from './OrthographicGroundReflection.js';
 
 
 
@@ -80,6 +81,7 @@ export function shouldRefreshViewerGroundReflection({
 
 
 type GroundUniforms = {
+  konitifGroundHorizonOpacity: IUniform<number>;
   konitifGroundTilePatternEnabled: IUniform<number>;
   konitifGroundSurfaceVariationEnabled: IUniform<number>;
   konitifGroundSize: IUniform<number>;
@@ -181,9 +183,17 @@ export class VisualGroundLayer {
       shader.vertexShader = injectGroundVertexShader(shader.vertexShader);
       shader.fragmentShader = injectGroundFragmentShader(shader.fragmentShader);
     };
-    this.surfaceMaterial.customProgramCacheKey = () => 'konitif-visual-ground-v3';
+    this.surfaceMaterial.customProgramCacheKey = () => 'konitif-visual-ground-v4';
 
     this.surfaceMesh = new Mesh(this.geometry, this.surfaceMaterial);
+    const horizonDirection = new Vector3();
+    this.surfaceMesh.onBeforeRender = (_renderer, _scene, camera) => {
+      if (!this.compiledUniforms) return;
+      const orthographic = 'isOrthographicCamera' in camera && camera.isOrthographicCamera;
+      const incidence = Math.abs(camera.getWorldDirection(horizonDirection).y);
+      this.compiledUniforms.konitifGroundHorizonOpacity.value = orthographic && this.config.components.fogFade
+        ? resolveViewerGroundReflectionIncidenceOpacity(incidence) : 1;
+    };
     this.surfaceMesh.name = 'viewer-visual-ground-surface';
     // Keep the visual surface immediately below the shared support plane.
     // The previous 3 mm offset was visible in close/side views and made a
@@ -205,6 +215,9 @@ export class VisualGroundLayer {
     });
     this.reflectionMesh.rotateX(-Math.PI / 2);
     this.reflectionMaterial = this.reflectionMesh.material as ShaderMaterial;
+    // A grazing/below-ground camera may skip the first reflected render. Keep
+    // the sampler on Three's initialized empty texture until the target has data.
+    this.reflectionMaterial.uniforms.tDiffuse.value = null;
     this.prepareReflectionMaterial();
     this.prepareReflectionFacingPass();
     this.reflectionMaterial.name = 'viewer-visual-ground-reflection';
@@ -295,6 +308,7 @@ export class VisualGroundLayer {
       this.reflectionMesh
         .getRenderTarget()
         .setSize(this.config.reflectionResolution, this.config.reflectionResolution);
+      this.reflectionMaterial.uniforms.tDiffuse.value = null;
     }
 
     const surfaceTransparencyChanged =
@@ -432,6 +446,7 @@ uniform float konitifReflectionBlurRadius;`
    */
   private prepareReflectionFacingPass(): void {
     const renderReflection = this.reflectionMesh.onBeforeRender;
+    const renderOrthographic = createOrthographicGroundReflection();
     const reflectorWorldPosition = new Vector3();
     const cameraWorldPosition = new Vector3();
     const reflectorNormal = new Vector3();
@@ -442,9 +457,12 @@ uniform float konitifReflectionBlurRadius;`
       this.reflectionMesh.getWorldPosition(reflectorWorldPosition);
       camera.getWorldPosition(cameraWorldPosition);
       reflectorNormal.set(0, 0, 1).transformDirection(this.reflectionMesh.matrixWorld);
-      cameraDirection.subVectors(cameraWorldPosition, reflectorWorldPosition).normalize();
-      const incidenceOpacity = resolveViewerGroundReflectionIncidenceOpacity(
-        cameraDirection.dot(reflectorNormal)
+      if ('isOrthographicCamera' in camera && camera.isOrthographicCamera) camera.getWorldDirection(cameraDirection).negate();
+      else cameraDirection.subVectors(cameraWorldPosition, reflectorWorldPosition).normalize();
+      const signedIncidence = cameraDirection.dot(reflectorNormal);
+      // Reflector skips the back side without writing its render target.
+      const incidenceOpacity = signedIncidence <= 0 ? 0 : resolveViewerGroundReflectionIncidenceOpacity(
+        signedIncidence
       );
       this.reflectionMaterial.uniforms.konitifReflectionOpacity.value =
         this.config.reflectionOpacity * incidenceOpacity;
@@ -493,7 +511,12 @@ uniform float konitifReflectionBlurRadius;`
       });
 
       try {
-        renderReflection.apply(this.reflectionMesh, args);
+        if ('isOrthographicCamera' in camera && camera.isOrthographicCamera) {
+          renderOrthographic(this.reflectionMesh, args[0], scene, camera);
+        } else {
+          renderReflection.apply(this.reflectionMesh, args);
+        }
+        this.reflectionMaterial.uniforms.tDiffuse.value = this.reflectionMesh.getRenderTarget().texture;
         this.lastReflectionRefreshAt = now;
         this.reflectionRefreshForced = false;
       } finally {
@@ -538,6 +561,7 @@ export function injectGroundVertexShader(source: string): string {
 export function injectGroundFragmentShader(source: string): string {
   const declarations = `
 varying vec2 vKonitifGroundPosition;
+uniform float konitifGroundHorizonOpacity;
 uniform float konitifGroundTilePatternEnabled;
 uniform float konitifGroundSurfaceVariationEnabled;
 uniform float konitifGroundSize;
@@ -631,7 +655,11 @@ vec4 diffuseColor = vec4(konitifGroundColor, opacity);
 
   return source
     .replace('void main() {', `${declarations}\nvoid main() {`)
-    .replace('vec4 diffuseColor = vec4( diffuse, opacity );', diffuseProjection);
+    .replace('vec4 diffuseColor = vec4( diffuse, opacity );', diffuseProjection)
+    .replace('#include <fog_fragment>', `#include <fog_fragment>
+#ifdef USE_FOG
+  gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, konitifGroundHorizonOpacity);
+#endif`);
 }
 
 function createGroundUniforms(
@@ -639,6 +667,7 @@ function createGroundUniforms(
   palette: ViewerVisualGroundPalette
 ): GroundUniforms {
   return {
+    konitifGroundHorizonOpacity: { value: 1 },
     konitifGroundTilePatternEnabled: { value: config.components.tilePattern ? 1 : 0 },
     konitifGroundSurfaceVariationEnabled: { value: config.components.surfaceVariation ? 1 : 0 },
     konitifGroundSize: { value: config.size },

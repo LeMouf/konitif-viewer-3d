@@ -1,3 +1,5 @@
+import {ViewerCardinalGridLayer} from './CardinalGridLayer.js';
+import {ViewerSceneEnvironmentLayer} from './SceneEnvironmentLayer.js';
 import { measureViewerOperation, type ViewerPerformanceObserver } from './PerformanceObservation.js';
 import {
   createViewerPhysicsFrameQuaternion, resolveViewerSceneYaw,
@@ -982,6 +984,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private gridHelper: GridHelper | null = null;
   private visualGroundLayer: VisualGroundLayer | null = null;
   private keyLight: DirectionalLight | null = null;
+  private cardinalGrid:ViewerCardinalGridLayer|null=null;
+  private sceneDayCycle:ViewerSceneEnvironmentLayer|null=null;
+  private sceneFog:{enabled:boolean;density:number|null}|null=null;
   private trajectoryGroup: Group | null = null;
   private contactPointGroup: Group | null = null;
   private physicsDebugGroup: Group | null = null;
@@ -1493,6 +1498,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.scheduleLoop();
   }
 
+  /** Signal a projection-only change made to caller-owned scene contributions.
+   * Uses the viewer's existing coalesced frame loop; does not advance simulation or transport.
+   */
+  requestPresentationFrame(): void {
+    this.requestRender();
+  }
+
   setStatsVisible(showStats: boolean): void {
     if (this.options.showStats === showStats) {
       return;
@@ -1527,6 +1539,27 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.globalRafProbeFrame = 0;
     }
   }
+
+  /** Set a static local solar time; the caller owns persistence and playback. */
+  setSceneTimeHours(timeHours:number):void{
+    this.sceneDayCycle??=new ViewerSceneEnvironmentLayer(this.scene,this.renderer,this.keyLight,()=>this.requestRender(),this.options.transparent);
+    this.sceneDayCycle.setFog(this.sceneFog);
+    this.sceneDayCycle.setTime(timeHours);
+  }
+
+  /** A null density delegates to the environment. Manual density survives day/night and theme changes. */
+  setSceneFog(settings:{enabled:boolean;density:number|null}|null):void{
+    this.sceneFog=settings?{enabled:settings.enabled,density:typeof settings.density==='number'&&Number.isFinite(settings.density)?Math.max(0,Math.min(.5,settings.density)):null}:null;
+    if(this.sceneDayCycle)this.sceneDayCycle.setFog(this.sceneFog);else this.updateVisualGroundEnvironment();
+    this.requestRender();
+  }
+
+  setCardinalGridVisible(visible:boolean):void{
+    if(visible)this.cardinalGrid??=new ViewerCardinalGridLayer(this.scene,()=>this.controls.target,this.renderer.domElement.parentElement??undefined);
+    else{this.cardinalGrid?.dispose();this.cardinalGrid=null;}
+    this.requestRender();
+  }
+  clearSceneTimeHours():void{this.sceneDayCycle?.dispose();this.sceneDayCycle=null;this.applyTheme();}
 
   setGridVisible(showGrid: boolean): void {
     if (this.options.showGrid === showGrid) {
@@ -4511,6 +4544,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   destroy(options: Viewer3DDestroyOptions = {}): void {
+    this.cardinalGrid?.dispose();this.cardinalGrid=null;
+    this.sceneDayCycle?.dispose();this.sceneDayCycle=null;
     this.performanceObserver = null;
     if (this.destroyed) {
       return;
@@ -4701,7 +4736,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.updateVisualGroundShadowCasters();
     this.updateVisualGroundFocusTiltPasses();
 
-    const fogEnabled = this.options.showVisualGround && (config?.components.fogFade ?? true);
+    const fogEnabled = this.sceneFog?.enabled ?? (this.options.showVisualGround && (config?.components.fogFade ?? true));
     if (!fogEnabled || this.options.transparent) {
       this.scene.fog = null;
       return;
@@ -4709,7 +4744,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     const themeBackgroundColor = this.resolveThemeColor('--color-background-canvas', '#111722');
     const fogColor = this.resolveVisualGroundSkyColor(themeBackgroundColor);
-    const fogDensity = config?.fogDensity ?? DEFAULT_VIEWER_VISUAL_GROUND_CONFIG.fogDensity;
+    const fogDensity = this.sceneFog?.density ?? config?.fogDensity ?? DEFAULT_VIEWER_VISUAL_GROUND_CONFIG.fogDensity;
     if (this.scene.fog instanceof FogExp2) {
       // Preserve the same fog authority while Viewer settings react. Replacing
       // the object on every layer update invalidated material state and could
@@ -4847,6 +4882,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.scene.fog.color.copy(backgroundColor);
     }
 
+    this.sceneDayCycle?.apply();
     if (!this.gridHelper) {
       this.requestRender();
       return;
@@ -5132,7 +5168,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.perspectiveCamera.near = planes.near;
     this.perspectiveCamera.far = planes.far;
     this.perspectiveCamera.updateProjectionMatrix();
-    this.orthographicCamera.near = planes.near;
+    // Orthographic projection has no perspective eye plane. Include geometry
+    // on both sides of the camera plane, especially the foreground floor
+    // at grazing angles; otherwise it is sliced by a positive near plane.
+    this.orthographicCamera.near = -planes.far;
     this.orthographicCamera.far = planes.far;
     this.orthographicCamera.updateProjectionMatrix();
   }
@@ -5669,6 +5708,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private renderScene(): void {
+    this.cardinalGrid?.update(this.camera);
     this.projectComparisonSimulation();
     if (this.observedRobotGhostMirrorsSimulatedRobot) {
       this.syncObservedRobotGhostFromSimulatedRobot();
@@ -6531,6 +6571,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
           ? copyViewerMetadata(currentTransform.metadata)
           : undefined
     };
+  }
+
+  /** Invalidate the on-demand projection after caller-owned scene changes. */
+  notifySceneChanged(): void {
+    if (!this.destroyed) this.requestRender();
   }
 
   private requestRender(): void {
@@ -14758,11 +14803,11 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     target: RobotViewerVector = this.options.cameraTarget,
     up?: RobotViewerVector
   ): void {
-    if (this.options.cameraControlMode === 'orbit') {
+    if (this.options.cameraControlMode === 'orbit' && !up) {
       const worldUpPose = resolveWorldUpCameraPose(
         new Vector3(position.x, position.y, position.z),
         new Vector3(target.x, target.y, target.z),
-        up ? new Vector3(up.x, up.y, up.z) : this.camera.up
+        this.camera.up
       );
       this.cameraController.setCameraPose(
         this.serializeCameraVector(worldUpPose.position),
@@ -14846,9 +14891,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     position: RobotViewerVector,
     target: RobotViewerVector = this.options.cameraTarget,
     durationMs = 420,
-    up?: RobotViewerVector
+    up?: RobotViewerVector,
+    transition: {zoom?:number;orbit?:boolean;onComplete?:()=>void;onCancel?:()=>void} = {}
   ): void {
-    if (this.options.cameraControlMode === 'orbit') {
+    if (this.options.cameraControlMode === 'orbit' && !transition.orbit) {
       const worldUpPose = resolveWorldUpCameraPose(
         new Vector3(position.x, position.y, position.z),
         new Vector3(target.x, target.y, target.z),
@@ -14858,12 +14904,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
         this.serializeCameraVector(worldUpPose.position),
         target,
         durationMs,
-        this.serializeCameraVector(worldUpPose.up)
+        this.serializeCameraVector(worldUpPose.up),
+        transition
       );
       return;
     }
 
-    this.cameraController.transitionCameraPose(position, target, durationMs, up);
+    this.cameraController.transitionCameraPose(position, target, durationMs, up, transition);
   }
 
   resetCameraView(durationMs = 520): void {
