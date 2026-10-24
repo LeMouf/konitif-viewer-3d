@@ -98,6 +98,12 @@ for (const file of [
   'dist/renderer/index.d.ts',
   'dist/renderer/Viewer3DRenderer.js',
   'dist/renderer/Viewer3DRenderer.d.ts',
+  'dist/renderer/SceneDayCycle.js',
+  'dist/renderer/SceneDayCycle.d.ts',
+  'dist/renderer/SceneEnvironmentLayer.js',
+  'dist/renderer/SceneEnvironmentLayer.d.ts',
+  'dist/renderer/CardinalGridLayer.js',
+  'dist/renderer/CardinalGridLayer.d.ts',
   'dist/renderer/IncarnationMaterialProjection.js',
   'dist/renderer/IncarnationMaterialProjection.d.ts',
   'dist/renderer/ObservedSoleStabilization.js',
@@ -111,7 +117,7 @@ for (const file of [
   'LICENSE.md',
   'package.json'
 ]) assert.ok(files.includes(file), file);
-assert.equal(files.length, 198);
+assert.equal(files.length, 218);
 const viewer3D = extract(packedViewer3D, viewer3DDirectory, manifest.name);
 
 const runtimeClosure = [
