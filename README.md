@@ -120,6 +120,20 @@ measurements. Disabled observation avoids its timing reads; observer exceptions
 cannot replace a renderer result or error. Destroying the renderer detaches the
 observer without taking ownership of host resources.
 
+## Scene obstacles and pointer input
+
+Projectile mode accepts optional host-owned scene queries through
+`resolveProjectileObstacleAim` and `resolveProjectileObstacleHit`. Coordinates
+are in the viewer frame; a swept hit reports the projectile centre at contact,
+the travelled distance and a unit outward normal. The nearest obstacle takes
+precedence over a robot behind it. Hosts retain scene geometry and simulation
+policy; these callbacks do not load assets or create a physics backend.
+
+Hold the right mouse button to charge and release it to launch. Pointer
+cancellation, lost capture, window blur and leaving projectile mode discard the
+charge. Keyboard charging remains available without competing with an active
+pointer charge. Other interaction modes keep their normal pointer behavior.
+
 ## Reference
 
 See [`reference/`](reference/) for the machine-readable capability catalog and

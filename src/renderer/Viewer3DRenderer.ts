@@ -147,6 +147,7 @@ import {
   resolveWorldUpCameraPose,
   type RobotCameraFocusFrame
 } from './CameraController.js';
+import { ProjectilePointerController } from './ProjectilePointerController.js';
 import { SelectionController } from './SelectionController.js';
 import { AnimationLoop } from './AnimationLoop.js';
 import { resolveViewerIncarnationHealth, type ViewerIncarnationHealth } from './ViewerIncarnationHealth.js';
@@ -513,6 +514,13 @@ export interface Viewer3DOptions<Artifact = unknown, Snapshot = unknown> {
   /** Ordered model anchors; absent/unresolved names use the geometric center. */
   cameraFocusAnchorNames?: readonly string[];
   projectileTargetAnchorNames?: readonly string[];
+  /** Host-owned scene query in viewer coordinates; distance is measured along the aim ray. */
+  resolveProjectileObstacleAim?: (raycaster: Raycaster) =>
+    { point: RobotViewerVector; distance: number } | null;
+  /** Swept projectile-centre contact. The host supplies geometry and a unit outward normal. */
+  resolveProjectileObstacleHit?: (
+    origin: RobotViewerVector, end: RobotViewerVector, radius: number
+  ) => { point: RobotViewerVector; normal: RobotViewerVector; distance: number } | null;
   /** Pure presentation policy; undefined selects the neutral renderer color. */
   resolveJointColor?: (jointId: string) => string | undefined;
   /** Pure model policy; absent means no implicit joint trajectory selection. */
@@ -1042,6 +1050,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   private readonly projectileRaycaster = new Raycaster();
   private readonly projectilePointer = new Vector2();
   private projectilePointerInside = false;
+  private projectilePointerController: ProjectilePointerController | null = null;
   private trajectoryAnimation: RobotMotionAnimation | null = null;
   private trajectorySignature = '';
   private trajectoryProjectionRevision = 0;
@@ -1284,6 +1293,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       balanceFootprintDefinitions: structuredClone(options.balanceFootprintDefinitions ?? []),
       cameraFocusAnchorNames: [...(options.cameraFocusAnchorNames ?? [])],
       projectileTargetAnchorNames: [...(options.projectileTargetAnchorNames ?? [])],
+      resolveProjectileObstacleAim: options.resolveProjectileObstacleAim ?? (() => null),
+      resolveProjectileObstacleHit: options.resolveProjectileObstacleHit ?? (() => null),
       resolveJointColor: options.resolveJointColor ?? (() => undefined),
       shouldRenderJointTrajectory: options.shouldRenderJointTrajectory ?? (() => false),
       handTipDefinitions: structuredClone(options.handTipDefinitions ?? []),
@@ -1467,6 +1478,25 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.renderer.domElement.addEventListener('pointerleave', this.handlePoseHandlePointerLeave, true);
     this.renderer.domElement.addEventListener('click', this.handlePoseHandleClick, true);
     this.renderer.domElement.addEventListener('pointermove', this.handleProjectilePointerMove, true);
+    this.projectilePointerController = new ProjectilePointerController({
+      element: this.renderer.domElement,
+      enabled: () => this.options.interactionMode === 'projectile',
+      begin: (event) => {
+        if (this.projectileChargeStartedAt !== null) return false;
+        this.handleProjectilePointerMove(event);
+        this.executeInteractionAction(VIEWER_PROJECTILE_CHARGE_ACTION_ID);
+        return this.projectileChargeStartedAt !== null;
+      },
+      launch: () => { this.executeInteractionAction(VIEWER_PROJECTILE_LAUNCH_ACTION_ID); },
+      cancel: () => {
+        this.projectileChargeStartedAt = null;
+        this.projectileLastChargeRatio = 0;
+        this.projectileSlingshotPullRatio = 0;
+        this.syncProjectileSlingshotPresentation(0);
+        this.reportProjectileInteraction('idle');
+        this.requestRender();
+      }
+    });
     this.container.addEventListener('pointerenter', this.handleProjectilePointerEnter, true);
     this.container.addEventListener('pointerleave', this.handleProjectilePointerLeave, true);
     window.addEventListener('keydown', this.handleInteractionKeyDown, true);
@@ -4599,6 +4629,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.renderer.domElement.removeEventListener('pointercancel', this.handlePoseHandlePointerUp, true);
     this.renderer.domElement.removeEventListener('pointerleave', this.handlePoseHandlePointerLeave, true);
     this.renderer.domElement.removeEventListener('click', this.handlePoseHandleClick, true);
+    this.projectilePointerController?.dispose();
+    this.projectilePointerController = null;
     this.renderer.domElement.removeEventListener('pointermove', this.handleProjectilePointerMove, true);
     this.container.removeEventListener('pointerenter', this.handleProjectilePointerEnter, true);
     this.container.removeEventListener('pointerleave', this.handleProjectilePointerLeave, true);
@@ -11056,6 +11088,15 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     );
     this.projectileRaycaster.setFromCamera(this.projectilePointer, this.camera);
     const robotHit = this.projectileRaycaster.intersectObject(robot, true)[0];
+    const floorPoint = this.projectileRaycaster.ray.intersectPlane(
+      new Plane(new Vector3(0, 1, 0), -ROBOT_VIEWER_SUPPORT_FLOOR_Y),
+      new Vector3()
+    );
+    const obstacle = this.options.resolveProjectileObstacleAim?.(this.projectileRaycaster);
+    if (obstacle && obstacle.distance < (robotHit?.distance ?? Number.POSITIVE_INFINITY) &&
+        obstacle.distance < (floorPoint?.distanceTo(this.projectileRaycaster.ray.origin) ?? Number.POSITIVE_INFINITY)) {
+      return { point: new Vector3(obstacle.point.x, obstacle.point.y, obstacle.point.z), bodyName: null };
+    }
     if (robotHit) {
       return {
         point: robotHit.point.clone(),
@@ -11069,10 +11110,6 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     // the launcher. A downward cursor ray lands on the support floor so misses
     // can bounce naturally; above the horizon it keeps the active robot's
     // focus depth, which still places the target exactly under the cursor.
-    const floorPoint = this.projectileRaycaster.ray.intersectPlane(
-      new Plane(new Vector3(0, 1, 0), -ROBOT_VIEWER_SUPPORT_FLOOR_Y),
-      new Vector3()
-    );
     const maximumFloorPickDistance = MathUtils.clamp(
       this.projectileRaycaster.ray.origin.distanceTo(defaultTarget.point) * 3,
       3,
@@ -11132,6 +11169,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   };
 
   private handleProjectileWindowBlur = (): void => {
+    this.projectilePointerController?.cancel();
     this.projectilePointerInside = false;
     this.beginProjectileIdleTransition();
   };
@@ -11152,6 +11190,10 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private handleInteractionKeyDown = (event: KeyboardEvent): void => {
+    if (this.projectilePointerController?.active && event.code === 'Space') {
+      event.preventDefault();
+      return;
+    }
     if (!this.projectilePointerInside || isEditableKeyboardTarget(event.target)) return;
     const handled = this.dispatchInteractionInput(createInteractionKeyboardSignal(event, 'press'));
     if (!handled) return;
@@ -11160,6 +11202,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   };
 
   private handleInteractionKeyUp = (event: KeyboardEvent): void => {
+    if (this.projectilePointerController?.active) return;
     if (
       this.projectileChargeStartedAt === null &&
       (!this.projectilePointerInside || isEditableKeyboardTarget(event.target))
@@ -11339,6 +11382,9 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       );
       const nextPosition = new Vector3(step.position.x, step.position.y, step.position.z);
       const nextVelocity = new Vector3(step.velocity.x, step.velocity.y, step.velocity.z);
+      const obstacleHit = this.options.resolveProjectileObstacleHit?.(
+        particle.position, nextPosition, ROBOT_VIEWER_PROJECTILE_RADIUS_M
+      );
       const robotContact =
         simulatedRobot &&
         now - particle.lastRobotContactAt >= ROBOT_VIEWER_PROJECTILE_ROBOT_CONTACT_COOLDOWN_MS
@@ -11348,10 +11394,18 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
               nextVelocity,
               simulatedRobot,
               simulatedRobotBounds,
-              now
+              now,
+              obstacleHit?.distance
             )
           : false;
-      if (!robotContact) {
+      if (!robotContact && obstacleHit) {
+        const normal = new Vector3(obstacleHit.normal.x, obstacleHit.normal.y, obstacleHit.normal.z);
+        particle.position.set(obstacleHit.point.x, obstacleHit.point.y, obstacleHit.point.z).addScaledVector(normal, 0.0001);
+        particle.velocity.copy(nextVelocity);
+        if (particle.velocity.dot(normal) < 0) {
+          particle.velocity.reflect(normal).multiplyScalar(ROBOT_VIEWER_PROJECTILE_ROBOT_RESTITUTION);
+        }
+      } else if (!robotContact) {
         particle.position.copy(nextPosition);
         particle.velocity.copy(nextVelocity);
         if (step.settled) {
@@ -11415,7 +11469,8 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     nextVelocity: Vector3,
     robot: Object3D,
     robotBounds: Box3 | null,
-    now: number
+    now: number,
+    obstacleDistance = Number.POSITIVE_INFINITY
   ): boolean {
     if (this.destroyed) return false;
     const segment = nextPosition.clone().sub(particle.position);
@@ -11444,7 +11499,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       ? null
       : (this.projectileRaycaster.intersectObject(robot, true)[0] ?? null);
     this.projectileRaycaster.far = Number.POSITIVE_INFINITY;
-    if (!physicsColliderHit && !visualHit) return false;
+    if ((physicsColliderHit?.distance ?? visualHit?.distance ?? Number.POSITIVE_INFINITY) >= obstacleDistance) return false;
 
     const hitPoint = physicsColliderHit?.point ?? visualHit!.point;
     const normal =
@@ -11580,7 +11635,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     origin: Vector3,
     direction: Vector3,
     distance: number
-  ): { point: Vector3; normal: Vector3; bodyName: string } | null {
+  ): { point: Vector3; normal: Vector3; bodyName: string; distance: number } | null {
     const bodyTransforms = this.physicsService.getBodyTransforms();
     if (bodyTransforms.length === 0) return null;
 
@@ -11680,6 +11735,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
   }
 
   private cancelProjectileInteraction(): void {
+    this.projectilePointerController?.cancel();
     this.projectileAimLaunch = null;
     this.projectileAimTransition = null;
     this.projectileChargeStartedAt = null;

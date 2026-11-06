@@ -42,6 +42,11 @@ const placement: ViewerLedPlacementDefinition = {
 };
 declare const port: Viewer3DPort;
 declare const container: HTMLDivElement;
+const sceneQueries: Pick<Viewer3DOptions, 'resolveProjectileObstacleAim' | 'resolveProjectileObstacleHit'> = {
+  resolveProjectileObstacleAim: ray => ({ point: ray.ray.origin, distance: 0 }),
+  resolveProjectileObstacleHit: (origin, end, radius) => ({ point: end, normal: { x: 0, y: 1, z: 0 }, distance: radius })
+};
+void sceneQueries;
 declare const physicsService: Viewer3DOptions['physicsService'];
 const collector = {
   start() {}, markPhase: () => false, record: () => false, isRecording: () => false,

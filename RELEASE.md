@@ -55,3 +55,11 @@ Physics first, then this 3D projection package.
 ## Idle balance and authored environment projections
 
 Version 0.285.9 refreshes balance evidence when contact freshness changes independently of pose and accepts the physical initial state before playback. It also projects caller-authored lighting and fog without taking ownership of asset loading, simulation policy or a playback clock.
+
+## Host scene queries and pointer ownership
+
+Version 0.285.10 carries the optional scene-obstacle queries and right-button
+projectile charge used by Behavior Studio. It replaces the consumer-side .8
+patch without introducing a scene, simulation or playback authority. Pointer
+ownership is transient and disposed with the renderer. The exact archive gate
+checks public callback types as well as the unchanged six public entries.

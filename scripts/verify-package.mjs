@@ -110,6 +110,8 @@ for (const file of [
   'dist/renderer/ObservedSoleStabilization.d.ts',
   'dist/renderer/PerformanceObservation.js',
   'dist/renderer/PerformanceObservation.d.ts',
+  'dist/renderer/ProjectilePointerController.js',
+  'dist/renderer/ProjectilePointerController.d.ts',
   'reference/README.md',
   'reference/catalog.json',
   'reference/diagrams.json',
@@ -117,7 +119,7 @@ for (const file of [
   'LICENSE.md',
   'package.json'
 ]) assert.ok(files.includes(file), file);
-assert.equal(files.length, 218);
+assert.equal(files.length, 222);
 const viewer3D = extract(packedViewer3D, viewer3DDirectory, manifest.name);
 
 const runtimeClosure = [
