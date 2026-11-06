@@ -51,3 +51,7 @@ The renderer version paired with the generic Physics subject-source contract
 replaces `loadPhysicsRobot` with `loadPhysicsSubject`. It must depend on the
 Physics release that provides `PhysicsSubjectSource` and `loadSubject`; publish
 Physics first, then this 3D projection package.
+
+## Idle balance and authored environment projections
+
+Version 0.285.9 refreshes balance evidence when contact freshness changes independently of pose and accepts the physical initial state before playback. It also projects caller-authored lighting and fog without taking ownership of asset loading, simulation policy or a playback clock.

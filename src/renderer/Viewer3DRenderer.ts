@@ -1,3 +1,4 @@
+import type {ViewerSceneDayCycle} from './SceneDayCycle.js';
 import {ViewerCardinalGridLayer} from './CardinalGridLayer.js';
 import {ViewerSceneEnvironmentLayer} from './SceneEnvironmentLayer.js';
 import { measureViewerOperation, type ViewerPerformanceObserver } from './PerformanceObservation.js';
@@ -1547,6 +1548,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     this.sceneDayCycle.setTime(timeHours);
   }
 
+  /** Apply a caller-owned environment projection. No clock, profile or document is acquired. */
+  setSceneDayCycleProjection(projection:ViewerSceneDayCycle):void{
+    if(![projection.timeHours,projection.exposure,projection.daylight,projection.keyIntensity,projection.direction.x,projection.direction.y,projection.direction.z].every(Number.isFinite))return;
+    this.sceneDayCycle??=new ViewerSceneEnvironmentLayer(this.scene,this.renderer,this.keyLight,()=>this.requestRender(),this.options.transparent);
+    this.sceneDayCycle.setFog(this.sceneFog);this.sceneDayCycle.setProjection(projection);
+  }
+
   /** A null density delegates to the environment. Manual density survives day/night and theme changes. */
   setSceneFog(settings:{enabled:boolean;density:number|null}|null):void{
     this.sceneFog=settings?{enabled:settings.enabled,density:typeof settings.density==='number'&&Number.isFinite(settings.density)?Math.max(0,Math.min(.5,settings.density)):null}:null;
@@ -2230,6 +2238,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     }
     this.schedulePhysicsResetBaselineCapture();
     this.syncPhysicsDebugTransforms();
+    if (this.options.showBalanceDebug) this.updateBalanceDebug();
     this.requestRender();
   }
 
@@ -6023,9 +6032,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
 
     this.publishTemporalProjectionStatus();
 
+    const balanceDebugChanged = receivedPhysicsSample && this.options.showBalanceDebug;
     if (visualPoseChanged) {
       this.robot?.updateMatrixWorld(true);
       this.updateViewerDebugLayers();
+    } else if (balanceDebugChanged) {
+      // Contact evidence can change while the displayed joint/root pose is identical.
+      this.updateBalanceDebug();
     }
 
     if (receivedPhysicsSample) {
@@ -6038,7 +6051,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       this.syncPhysicsDebugTransforms(visualBodyTransforms, visualCenterOfMass);
     }
 
-    return visualPoseChanged || physicsDebugChanged;
+    return visualPoseChanged || physicsDebugChanged || balanceDebugChanged;
   }
 
   private capturePhysicsVisualJointAngles(): Record<string, number> {
@@ -13642,10 +13655,18 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     const bodies = this.poseControlTarget === 'observed' && this.comparisonProfileId !== null
       ? (this.comparisonViewerSample?.physics?.bodyTransforms ?? []).map(body =>
           this.deserializeRuntimeHistoryTransform(body, false))
-      : this.projectedPhysicsBodyTransforms;
+      : this.resolveBalanceDebugPhysicsBodies();
     const observation = bodies.find(body => body.metadata?.visualRoot === true)?.metadata?.groundContacts;
     if (!observation || typeof observation !== 'object' || Array.isArray(observation) ||
       observation.status !== 'observed' || !Array.isArray(observation.points)) return null;
+    // A freshly placed free body can have deliberate clearance above the
+    // floor before the host advances the solver. That is unassessed support,
+    // not an observed loss of contact. Never reinterpret a recorded sample.
+    const initialIdlePose = this.projectedPhysicsBodyTransforms.length === 0 &&
+      !this.runtimeHistoryReplayActive && !this.playbackState?.animation && !this.playbackState?.isPlaying &&
+      !this.scrubPreviewState?.active && this.poseControlTarget !== 'observed';
+    const metadata = initialIdlePose ? this.physicsService.snapshot().backendStatus?.metadata : null;
+    if (observation.points.length === 0 && metadata?.stepCount === 0 && metadata?.simulatedTime === 0) return null;
     const points: Vector3[] = [];
     for (const point of observation.points) {
       if (!point || typeof point !== 'object' || Array.isArray(point) ||
@@ -13802,6 +13823,14 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
     ];
   }
 
+  /** Reuse the acknowledged initial pose without starting a playback or a physics step. */
+  private resolveBalanceDebugPhysicsBodies(): readonly BodyTransform[] {
+    if (this.projectedPhysicsBodyTransforms.length > 0) return this.projectedPhysicsBodyTransforms;
+    if (this.runtimeHistoryReplayActive || this.playbackState?.animation || this.playbackState?.isPlaying || this.scrubPreviewState?.active ||
+        !this.isPhysicsActive() || !this.acceptFreshPhysicsRootProjection()) return [];
+    return this.physicsService.getBodyTransforms();
+  }
+
   private resolveBalanceDebugCenterOfMass(): Vector3 | null {
     if (this.poseControlTarget === 'observed' && this.comparisonProfileId) {
       const sample = this.comparisonViewerSample?.physics;
@@ -13811,11 +13840,13 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       );
       return this.resolvePhysicsVectorViewerPosition(sample.centerOfMass, bodies);
     }
-    const centerOfMass = this.projectedPhysicsCenterOfMass;
+    const bodies = this.resolveBalanceDebugPhysicsBodies();
+    const centerOfMass = this.projectedPhysicsBodyTransforms.length > 0
+      ? this.projectedPhysicsCenterOfMass : bodies.length > 0 ? this.physicsService.getCenterOfMass() : null;
 
     if (
       !centerOfMass ||
-      this.projectedPhysicsBodyTransforms.length === 0 ||
+      bodies.length === 0 ||
       !Number.isFinite(centerOfMass.x) ||
       !Number.isFinite(centerOfMass.y) ||
       !Number.isFinite(centerOfMass.z)
@@ -13823,7 +13854,7 @@ export class Viewer3D<Artifact = unknown, Snapshot = unknown> implements ViewerE
       return null;
     }
 
-    return this.resolvePhysicsVectorViewerPosition(centerOfMass, this.projectedPhysicsBodyTransforms);
+    return this.resolvePhysicsVectorViewerPosition(centerOfMass, bodies);
   }
 
   private resolvePhysicsVectorViewerPosition(
