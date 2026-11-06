@@ -1,7 +1,7 @@
 import {resolveViewerCelestialDirections,resolveViewerSolarPeakAltitude,resolveViewerMoonPhase} from './SceneAstronomy.js';
 /** Default day/night palette and celestial exposure ported from Behavior Studio.
  * Time is caller-owned; this spatial projection never starts a clock or changes a document. */
-export interface ViewerSceneDayCycle {timeHours:number;phase:'night'|'dawn'|'day'|'dusk';daylight:number;exposure:number;zenith:string;horizon:string;ground:string;light:string;direction:{x:number;y:number;z:number};keyIntensity:number}
+export interface ViewerSceneDayCycle {timeHours:number;phase:'night'|'dawn'|'day'|'dusk';daylight:number;exposure:number;zenith:string;horizon:string;ground:string;light:string;direction:{x:number;y:number;z:number};keyIntensity:number;fogDensity?:number}
 export const wrapViewerSceneTime=(value:number)=>Number.isFinite(value)?((value%24)+24)%24:12;
 const SCENE_STOPS = [
   { hour:0, daylight:.12, zenith:'#071326', horizon:'#172b43', ground:'#101a28', fog:'#101d2e', light:'#8da9d4' },
